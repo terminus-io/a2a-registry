@@ -1,0 +1,17 @@
+apiVersion: a2a.io/v1
+kind: A2ARegistry
+metadata:
+  name: default-registry
+spec:
+  discovery:
+    scope: "Cluster"
+  registration:
+    requireApproval: false
+    requireHealthCheck: true
+    requireCardMatch: false
+  healthCheck:
+    intervalSeconds: 120
+    timeoutSeconds: 15
+  apiServer:
+    port: 8082
+    bindAddress: "0.0.0.0"

@@ -1,0 +1,8 @@
+bin/
+vendor/
+.claude/
+cover.out
+*.swp
+*.swo
+*~
+.DS_Store

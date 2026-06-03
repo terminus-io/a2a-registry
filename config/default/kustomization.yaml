@@ -1,0 +1,18 @@
+# Adds namespace to all resources.
+namespace: a2a-registry-system
+
+# Value of this field is prepended to the names of all resources
+# e.g. a deployment named "wordpress" becomes "alices-wordpress".
+# Note that it should also match with the prefix in the image specified in config/manager/manager.yaml.
+namePrefix: a2a-registry-
+
+# Labels to add to all resources and selectors.
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: a2a-registry
+
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager

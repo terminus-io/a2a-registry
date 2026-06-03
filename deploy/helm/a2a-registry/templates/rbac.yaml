@@ -1,0 +1,153 @@
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "a2a-registry.fullname" . }}-manager
+  labels:
+    {{- include "a2a-registry.labels" . | nindent 4 }}
+rules:
+  # A2AAgent resources
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aagents
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aagents/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aagents/status
+    verbs:
+      - get
+      - patch
+      - update
+  # A2ARegistry resources (cluster-scoped)
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aregistries
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aregistries/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - a2a.io
+    resources:
+      - a2aregistries/status
+    verbs:
+      - get
+      - patch
+      - update
+  # Secrets for auth credential resolution
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  # Namespaces for cross-namespace discovery
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "a2a-registry.fullname" . }}-manager
+  namespace: {{ include "a2a-registry.namespace" . }}
+  labels:
+    {{- include "a2a-registry.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "a2a-registry.fullname" . }}-manager
+  labels:
+    {{- include "a2a-registry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "a2a-registry.fullname" . }}-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "a2a-registry.serviceAccountName" . }}
+    namespace: {{ include "a2a-registry.namespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "a2a-registry.fullname" . }}-manager
+  namespace: {{ include "a2a-registry.namespace" . }}
+  labels:
+    {{- include "a2a-registry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "a2a-registry.fullname" . }}-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "a2a-registry.serviceAccountName" . }}
+    namespace: {{ include "a2a-registry.namespace" . }}
+{{- end }}

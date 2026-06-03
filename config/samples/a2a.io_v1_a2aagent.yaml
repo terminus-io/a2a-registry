@@ -1,0 +1,36 @@
+apiVersion: a2a.io/v1
+kind: A2AAgent
+metadata:
+  name: hello-world-agent
+  namespace: default
+spec:
+  name: "Hello World Agent"
+  description: "A simple example agent that returns greetings"
+  version: "1.0.0"
+  url: "http://agent-service.default.svc.cluster.local:9001"
+  capabilities:
+    streaming: true
+    pushNotifications: false
+  skills:
+    - id: "hello_world"
+      name: "Hello, world!"
+      description: "Returns a greeting message"
+      tags:
+        - "greeting"
+        - "demo"
+      examples:
+        - "hi"
+        - "hello"
+  defaultInputModes:
+    - "text"
+  defaultOutputModes:
+    - "text"
+  protocolVersion: "1.0"
+  tags:
+    - "demo"
+    - "example"
+  enabled: true
+  healthCheck:
+    intervalSeconds: 60
+    timeoutSeconds: 10
+    failureThreshold: 3

@@ -1,0 +1,48 @@
+{{- $ns := include "a2a-registry.namespace" . -}}
+{{- $svc := include "a2a-registry.fullname" . -}}
+
+CHART: {{ .Chart.Name }}-{{ .Chart.Version }}
+APP VERSION: {{ .Chart.AppVersion }}
+
+🎉 A2A Registry has been deployed successfully!
+
+{{- if .Values.namespace.create }}
+Namespace: {{ $ns }} (created)
+{{- else }}
+Namespace: {{ $ns }}
+{{- end }}
+
+Deployment: {{ $svc }}
+Replicas:   {{ .Values.replicaCount }}
+
+To check the operator status:
+
+  kubectl get pods -n {{ $ns }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+To query the registry API, forward the service port:
+
+  kubectl port-forward -n {{ $ns }} svc/{{ $svc }} {{ .Values.service.registryAPI.port }}:{{ .Values.service.registryAPI.port }}
+
+Then access:
+
+  # List all agents
+  curl http://localhost:{{ .Values.service.registryAPI.port }}/api/v1/agents
+
+  # Search agents
+  curl "http://localhost:{{ .Values.service.registryAPI.port }}/api/v1/search?q=hello"
+
+  # Registry's own Agent Card
+  curl http://localhost:{{ .Values.service.registryAPI.port }}/.well-known/agent-card.json
+
+To create an A2ARegistry and register an agent, apply the sample CRs:
+
+  kubectl apply -f https://raw.githubusercontent.com/terminus-io/a2a-registry/main/config/samples/a2a.io_v1_a2aregistry.yaml
+  kubectl apply -f https://raw.githubusercontent.com/terminus-io/a2a-registry/main/config/samples/a2a.io_v1_a2aagent.yaml
+
+{{- if .Values.webhooks.enabled }}
+Webhooks are ENABLED. Ensure cert-manager is installed in the cluster, or set webhooks.enabled=false.
+{{- else }}
+Webhooks are DISABLED. Set webhooks.enabled=true to enable admission webhooks (requires cert-manager).
+{{- end }}
+
+For more information, visit: https://github.com/terminus-io/a2a-registry

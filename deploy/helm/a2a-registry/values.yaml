@@ -1,0 +1,138 @@
+# Default values for a2a-registry.
+
+# -- Number of replicas to run
+replicaCount: 1
+
+image:
+  # -- Image repository
+  repository: ghcr.io/terminus-io/a2a-registry
+  # -- Image tag (overrides the default, which is the chart appVersion)
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets
+imagePullSecrets: []
+# -- Name of the chart release to override the fullname
+nameOverride: ""
+# -- String to fully override the fullname
+fullnameOverride: ""
+
+# Operator arguments
+config:
+  # -- Prometheus metrics bind address
+  metricsBindAddress: ":8080"
+  # -- Health/readiness probe bind address
+  healthProbeBindAddress: ":8081"
+  # -- Registry API bind address
+  registryAPIBindAddress: ":8082"
+  # -- Enable leader election (set to true for HA deployments)
+  leaderElect: false
+  # -- Leader election identity
+  leaderElectionID: "a2a-registry"
+
+# Admission webhooks
+webhooks:
+  # -- Enable validating and mutating admission webhooks
+  enabled: true
+
+# ServiceAccount configuration
+serviceAccount:
+  # -- Create a ServiceAccount
+  create: true
+  # -- ServiceAccount name (defaults to a2a-registry fullname)
+  name: ""
+  # -- Additional annotations for the ServiceAccount
+  annotations: {}
+  # -- Additional labels for the ServiceAccount
+  labels: {}
+
+# RBAC configuration
+rbac:
+  # -- Create RBAC resources (ClusterRole, Role, bindings)
+  create: true
+
+# Namespace configuration
+namespace:
+  # -- Create the namespace
+  create: true
+  # -- Namespace name
+  name: "a2a-registry-system"
+
+# Service configuration
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- Additional annotations for the Service
+  annotations: {}
+  # -- Additional labels for the Service
+  labels: {}
+  metrics:
+    # -- Metrics service port
+    port: 8080
+  health:
+    # -- Health probe service port
+    port: 8081
+  registryAPI:
+    # -- Registry API service port
+    port: 8082
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Liveness probe
+livenessProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+# Readiness probe
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# -- Pod-level security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+
+# -- Container-level security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# -- Node selector for pod assignment
+nodeSelector: {}
+
+# -- Tolerations for pod assignment
+tolerations: []
+
+# -- Affinity for pod assignment
+affinity: {}
+
+# -- Topology spread constraints
+topologySpreadConstraints: []
+
+# -- Additional annotations for the pod
+podAnnotations: {}
+
+# -- Additional labels for the pod
+podLabels: {}
+
+# -- Additional environment variables
+extraEnv: []
+# - name: FOO
+#   value: bar
+
+# -- Pod termination grace period (seconds)
+terminationGracePeriodSeconds: 10

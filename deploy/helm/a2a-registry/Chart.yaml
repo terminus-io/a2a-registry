@@ -1,0 +1,19 @@
+apiVersion: v2
+name: a2a-registry
+description: A Kubernetes-native Agent Registry for the Agent-to-Agent (A2A) protocol
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - a2a
+  - agent
+  - registry
+  - kubernetes
+  - operator
+  - agent-to-agent
+home: https://github.com/terminus-io/a2a-registry
+sources:
+  - https://github.com/terminus-io/a2a-registry
+maintainers:
+  - name: terminus-io
+    url: https://github.com/terminus-io

@@ -1,0 +1,8 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "a2a-registry.namespace" . }}
+  labels:
+    {{- include "a2a-registry.labels" . | nindent 4 }}
+{{- end }}
