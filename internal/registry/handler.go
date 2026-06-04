@@ -29,6 +29,27 @@ func NewHandler(client client.Client, config *DiscoveryConfig) *Handler {
 	}
 }
 
+// ConfigResponse holds the registry configuration for the dashboard.
+type ConfigResponse struct {
+	RequireApproval bool `json:"requireApproval"`
+}
+
+// Config returns the registry configuration used by the dashboard.
+func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
+	requireApproval := false
+	if h.config != nil {
+		// We need to read the registry CR to get the actual value.
+		// For the dashboard, we read the first A2ARegistry.
+		registries := &a2aiov1.A2ARegistryList{}
+		if err := h.client.List(r.Context(), registries); err == nil && len(registries.Items) > 0 {
+			requireApproval = registries.Items[0].Spec.Registration.RequireApproval
+		}
+	}
+	resp := ConfigResponse{RequireApproval: requireApproval}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // WellKnown returns the registry's own Agent Card.
 func (h *Handler) WellKnown(w http.ResponseWriter, r *http.Request) {
 	scheme := "http"
@@ -68,16 +89,25 @@ func (h *Handler) WellKnown(w http.ResponseWriter, r *http.Request) {
 
 // RegistryEntry is a lightweight view of a registered agent.
 type RegistryEntry struct {
-	Name        string       `json:"name"`
-	DisplayName string       `json:"displayName"`
-	Description string       `json:"description,omitempty"`
-	URL         string       `json:"url"`
-	Version     string       `json:"version,omitempty"`
-	Health      string       `json:"health"`
-	Phase       string       `json:"phase"`
-	Tags        []string     `json:"tags,omitempty"`
-	Skills      []SkillEntry `json:"skills,omitempty"`
-	Namespace   string       `json:"namespace"`
+	Name        string              `json:"name"`
+	DisplayName string              `json:"displayName"`
+	Description string              `json:"description,omitempty"`
+	URL         string              `json:"url"`
+	Version     string              `json:"version,omitempty"`
+	Health      string              `json:"health"`
+	Phase       string              `json:"phase"`
+	Tags        []string            `json:"tags,omitempty"`
+	Skills      []SkillEntry        `json:"skills,omitempty"`
+	Namespace   string              `json:"namespace"`
+	Conditions  []ConditionEntry    `json:"conditions,omitempty"`
+}
+
+// ConditionEntry is a lightweight view of a K8s condition.
+type ConditionEntry struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // SkillEntry is a lightweight view of an agent skill.
@@ -456,6 +486,16 @@ func agentToEntry(agent a2aiov1.A2AAgent) RegistryEntry {
 		phase = "Pending"
 	}
 
+	conditions := make([]ConditionEntry, 0, len(agent.Status.Conditions))
+	for _, c := range agent.Status.Conditions {
+		conditions = append(conditions, ConditionEntry{
+			Type:    c.Type,
+			Status:  string(c.Status),
+			Reason:  c.Reason,
+			Message: c.Message,
+		})
+	}
+
 	return RegistryEntry{
 		Name:        agent.Name,
 		DisplayName: agent.Spec.Name,
@@ -467,6 +507,7 @@ func agentToEntry(agent a2aiov1.A2AAgent) RegistryEntry {
 		Tags:        agent.Spec.Tags,
 		Skills:      skills,
 		Namespace:   agent.Namespace,
+		Conditions:  conditions,
 	}
 }
 

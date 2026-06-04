@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A2A Registry Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+.header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 20px; color: #38bdf8; }
+.stats { display: flex; gap: 24px; }
+.stat { text-align: center; }
+.stat .num { font-size: 28px; font-weight: 700; }
+.stat .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+.stat .num.green { color: #4ade80; }
+.stat .num.yellow { color: #facc15; }
+.stat .num.red { color: #f87171; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px 24px; }
+.toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.toolbar input { flex: 1; min-width: 200px; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
+.toolbar input:focus { outline: none; border-color: #38bdf8; }
+.toolbar select { padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
+.btn { padding: 8px 16px; border-radius: 6px; font-size: 14px; cursor: pointer; border: none; font-weight: 500; }
+.btn:hover { filter: brightness(1.15); }
+.btn-primary { background: #2563eb; color: #fff; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-success { background: #16a34a; color: #fff; }
+.btn-ghost { background: #334155; color: #e2e8f0; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-icon { padding: 6px 10px; font-size: 16px; line-height: 1; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 12px; font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; }
+td { padding: 10px 12px; border-bottom: 1px solid #1e293b; font-size: 14px; }
+tr:hover { background: #1e293b; }
+.agent-link { color: #38bdf8; cursor: pointer; text-decoration: none; }
+.agent-link:hover { text-decoration: underline; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.badge-ready { background: #14532d; color: #4ade80; }
+.badge-pending { background: #422006; color: #facc15; }
+.badge-error { background: #450a0a; color: #f87171; }
+.badge-unreachable { background: #3b0764; color: #c084fc; }
+.badge-healthy { color: #4ade80; }
+.badge-unhealthy { color: #f87171; }
+.badge-unknown { color: #94a3b8; }
+.url-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; gap: 6px; }
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 500px; max-width: 90vw; max-height: 85vh; overflow-y: auto; }
+.modal.wide { width: 600px; }
+.modal h2 { margin-bottom: 16px; color: #38bdf8; font-size: 18px; }
+.modal h3 { color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 16px 0 8px; }
+.modal label { display: block; margin-bottom: 4px; font-size: 13px; color: #94a3b8; }
+.modal input, .modal textarea { width: 100%; padding: 8px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; margin-bottom: 12px; resize: vertical; }
+.modal input:focus, .modal textarea:focus { outline: none; border-color: #38bdf8; }
+.modal .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+.detail-grid .key { color: #94a3b8; font-size: 12px; }
+.detail-grid .val { font-size: 14px; word-break: break-all; }
+.detail-grid .full { grid-column: 1 / -1; }
+.skill-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.skill-card .skill-name { font-weight: 600; color: #e2e8f0; }
+.skill-card .skill-id { color: #38bdf8; font-size: 12px; margin-left: 8px; }
+.skill-card .skill-desc { color: #94a3b8; font-size: 13px; margin-top: 4px; }
+.condition-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
+.condition-row .cond-type { font-weight: 600; min-width: 120px; }
+.condition-row .cond-reason { color: #94a3b8; font-size: 12px; }
+.empty { text-align: center; padding: 48px; color: #64748b; }
+.toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 200; animation: slideIn 0.3s ease; }
+.toast-success { background: #14532d; color: #4ade80; border: 1px solid #16a34a; }
+.toast-error { background: #450a0a; color: #f87171; border: 1px solid #dc2626; }
+.lang-switch { display: flex; gap: 4px; }
+.lang-switch button { padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; border: 1px solid #334155; background: transparent; color: #94a3b8; }
+.lang-switch button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>A2A Registry</h1>
+  <div class="stats">
+    <div class="stat"><div class="num" id="totalAgents">-</div><div class="label" data-i18n="total">Total</div></div>
+    <div class="stat"><div class="num green" id="healthyAgents">-</div><div class="label" data-i18n="healthy">Healthy</div></div>
+    <div class="stat"><div class="num yellow" id="pendingAgents">-</div><div class="label" data-i18n="pending">Pending</div></div>
+  </div>
+  <div class="lang-switch">
+    <button id="btnZh" onclick="setLang('zh')">中文</button>
+    <button id="btnEn" onclick="setLang('en')">EN</button>
+  </div>
+</div>
+<div class="container">
+  <div class="toolbar">
+    <input type="text" id="search" data-i18n-placeholder="search" placeholder="Search..." oninput="render()">
+    <select id="phaseFilter" onchange="render()">
+      <option value="" data-i18n="allStatus">All</option>
+      <option value="Ready">Ready</option>
+      <option value="Pending">Pending</option>
+      <option value="Error">Error</option>
+      <option value="Unreachable">Unreachable</option>
+    </select>
+    <button class="btn btn-ghost btn-icon" onclick="refresh()" title="Refresh">&#x21bb;</button>
+    <button class="btn btn-primary" onclick="showRegister()" data-i18n="register">Register</button>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th data-i18n="colName">Name</th>
+        <th>Phase</th>
+        <th>Health</th>
+        <th>URL</th>
+        <th>Namespace</th>
+        <th data-i18n="colTags">Tags</th>
+        <th data-i18n="colOps">Ops</th>
+      </tr>
+    </thead>
+    <tbody id="agentTable"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none" data-i18n="noAgents">No agents found</div>
+</div>
+
+<!-- Register Modal -->
+<div class="modal-overlay" id="registerModal">
+  <div class="modal">
+    <h2 data-i18n="regTitle">Register Agent</h2>
+    <label data-i18n="regName">Name *</label><input type="text" id="regName" placeholder="My Agent">
+    <label>URL *</label><input type="text" id="regURL" placeholder="http://agent.ns.svc.cluster.local:9001">
+    <label data-i18n="regDesc">Description</label><input type="text" id="regDesc">
+    <label data-i18n="regVersion">Version</label><input type="text" id="regVersion" placeholder="1.0.0">
+    <label data-i18n="regTags">Tags (comma separated)</label><input type="text" id="regTags" placeholder="demo,example">
+    <label data-i18n="regSkills">Skills (one per line: id,name)</label><textarea id="regSkills" rows="3" placeholder="greeting,Greeting&#10;search,Search"></textarea>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="hideRegister()" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="doRegister()" data-i18n="regBtn">Register</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal wide">
+    <h2 id="detailName">Agent Detail</h2>
+    <div class="detail-grid" id="detailGrid"></div>
+    <h3 id="skillsHeader" style="display:none" data-i18n="skills">Skills</h3>
+    <div id="detailSkills"></div>
+    <h3 id="conditionsHeader" style="display:none">Conditions</h3>
+    <div id="detailConditions"></div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="hideDetail()" data-i18n="close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let lang = localStorage.getItem('a2a_lang') || 'zh';
+
+const i18n = {
+  zh: {
+    total: '总数', healthy: '健康', pending: '待审批',
+    search: '搜索 agent...', allStatus: '全部状态',
+    register: '+ 注册', regTitle: '注册新 Agent',
+    regName: '名称 *', regDesc: '描述', regVersion: '版本',
+    regTags: '标签 (逗号分隔)', regSkills: '技能 (每行: id,name)',
+    cancel: '取消', regBtn: '注册', close: '关闭',
+    colName: '名称', colTags: '标签', colOps: '操作',
+    noAgents: '没有找到 agent', skills: '技能',
+    approve: '审批', delete: '删除', detailTitle: 'Agent 详情',
+    regOk: '注册成功', regFail: '注册失败', delOk: '已删除',
+    delFail: '删除失败', delConfirm: '确认删除',
+    approveOk: '审批成功', approveFail: '审批失败',
+    netErr: '网络错误', required: '名称和 URL 为必填项',
+    phase: 'Phase', healthLbl: 'Health', versionLbl: 'Version',
+    desc: '描述', tagsLbl: '标签', nsLabel: 'K8s Name',
+    nsField: 'Namespace',
+  },
+  en: {
+    total: 'Total', healthy: 'Healthy', pending: 'Pending',
+    search: 'Search agents...', allStatus: 'All',
+    register: '+ Register', regTitle: 'Register Agent',
+    regName: 'Name *', regDesc: 'Description', regVersion: 'Version',
+    regTags: 'Tags (comma separated)', regSkills: 'Skills (one per line: id,name)',
+    cancel: 'Cancel', regBtn: 'Register', close: 'Close',
+    colName: 'Name', colTags: 'Tags', colOps: 'Ops',
+    noAgents: 'No agents found', skills: 'Skills',
+    approve: 'Approve', delete: 'Delete', detailTitle: 'Agent Detail',
+    regOk: 'Agent registered', regFail: 'Registration failed',
+    delOk: 'Deleted', delFail: 'Delete failed', delConfirm: 'Confirm delete',
+    approveOk: 'Approved', approveFail: 'Approval failed',
+    netErr: 'Network error', required: 'Name and URL are required',
+    phase: 'Phase', healthLbl: 'Health', versionLbl: 'Version',
+    desc: 'Description', tagsLbl: 'Tags', nsLabel: 'K8s Name',
+    nsField: 'Namespace',
+  }
+};
+
+function t(key) { return (i18n[lang] && i18n[lang][key]) || key; }
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem('a2a_lang', l);
+  document.getElementById('btnZh').className = l === 'zh' ? 'active' : '';
+  document.getElementById('btnEn').className = l === 'en' ? 'active' : '';
+  applyI18n();
+  render();
+}
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.getElementById('empty').textContent = t('noAgents');
+}
+setLang(lang);
+
+let agents = [];
+let requireApproval = false;
+
+async function fetchConfig() {
+  try {
+    const res = await fetch('/api/v1/config');
+    const cfg = await res.json();
+    requireApproval = cfg.requireApproval;
+  } catch(e) { requireApproval = false; }
+}
+async function fetchAgents() {
+  try {
+    const res = await fetch('/api/v1/agents');
+    agents = await res.json();
+    render();
+  } catch(e) { console.error(e); }
+}
+function refresh() { fetchAgents(); }
+
+function render() {
+  try {
+  applyI18n();
+  const q = (document.getElementById('search').value || '').toLowerCase();
+  const phase = document.getElementById('phaseFilter').value;
+  let filtered = agents;
+  if (phase) filtered = filtered.filter(a => a.phase === phase);
+  if (q) filtered = filtered.filter(a =>
+    (a.displayName||'').toLowerCase().includes(q) ||
+    (a.description||'').toLowerCase().includes(q) ||
+    (a.tags||[]).some(t => t.toLowerCase().includes(q))
+  );
+
+  document.getElementById('totalAgents').textContent = agents.length;
+  document.getElementById('healthyAgents').textContent = agents.filter(a => a.health === 'Healthy').length;
+  document.getElementById('pendingAgents').textContent = agents.filter(a => a.phase === 'Pending').length;
+
+  const tbody = document.getElementById('agentTable');
+  const empty = document.getElementById('empty');
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    empty.textContent = t('noAgents');
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = filtered.map(a => {
+    const phaseCls = 'badge-' + (a.phase || 'pending').toLowerCase();
+    const tags = (a.tags||[]).slice(0,3).map(tag => `<span style="background:#334155;padding:1px 6px;border-radius:4px;font-size:11px;margin-right:4px">${esc(tag)}</span>`).join('');
+    return `<tr>
+      <td><a class="agent-link" onclick="showDetail('${esc(a.name)}','${esc(a.namespace)}')">${esc(a.displayName || a.name)}</a></td>
+      <td><span class="badge ${phaseCls}">${a.phase||'Pending'}</span></td>
+      <td><span class="badge-${(a.health||'unknown').toLowerCase()}">${a.health||'Unknown'}</span></td>
+      <td class="url-cell" title="${esc(a.url)}">${esc(a.url)}</td>
+      <td>${esc(a.namespace)}</td>
+      <td>${tags}</td>
+      <td class="actions">
+        ${requireApproval && a.phase === 'Pending' && !isApproved(a) ? `<button class="btn btn-success btn-sm" onclick="approveAgent('${esc(a.name)}','${esc(a.namespace)}')">${t('approve')}</button>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="removeAgent('${esc(a.name)}','${esc(a.namespace)}')">${t('delete')}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  } catch(e) { console.error('render error:', e); }
+}
+
+function showDetail(name, ns) {
+  const a = agents.find(x => x.name === name && x.namespace === ns);
+  if (!a) return;
+  document.getElementById('detailName').textContent = t('detailTitle') + ': ' + (a.displayName || a.name);
+  document.getElementById('detailGrid').innerHTML = [
+    [t('nsLabel'), a.name],
+    [t('nsField'), a.namespace],
+    [t('phase'), `<span class="badge badge-${(a.phase||'pending').toLowerCase()}">${a.phase||'Pending'}</span>`],
+    [t('healthLbl'), `<span class="badge-${(a.health||'unknown').toLowerCase()}">${a.health||'Unknown'}</span>`],
+    ['URL', esc(a.url)],
+    [t('versionLbl'), a.version || '-'],
+    [t('desc'), a.description || '-'],
+    [t('tagsLbl'), (a.tags||[]).join(', ') || '-'],
+  ].map(([k, v]) => `<div class="key">${k}</div><div class="val">${v}</div>`).join('');
+
+  const skills = a.skills || [];
+  const skillsDiv = document.getElementById('detailSkills');
+  const skillsHdr = document.getElementById('skillsHeader');
+  if (skills.length > 0) {
+    skillsHdr.style.display = '';
+    skillsHdr.textContent = t('skills');
+    skillsDiv.innerHTML = skills.map(s => `<div class="skill-card">
+      <div><span class="skill-name">${esc(s.name)}</span><span class="skill-id">${esc(s.id)}</span></div>
+      ${s.description ? `<div class="skill-desc">${esc(s.description)}</div>` : ''}
+    </div>`).join('');
+  } else {
+    skillsHdr.style.display = 'none';
+    skillsDiv.innerHTML = '';
+  }
+
+  const conds = a.conditions || [];
+  const condDiv = document.getElementById('detailConditions');
+  const condHdr = document.getElementById('conditionsHeader');
+  if (conds.length > 0) {
+    condHdr.style.display = '';
+    condDiv.innerHTML = conds.map(c => `<div class="condition-row">
+      <span class="cond-type">${esc(c.type)}</span>
+      <span class="badge ${c.status === 'True' ? 'badge-ready' : 'badge-pending'}">${c.status}</span>
+      <span class="cond-reason">${esc(c.reason||'')}${c.message ? ' — ' + esc(c.message) : ''}</span>
+    </div>`).join('');
+  } else {
+    condHdr.style.display = 'none';
+    condDiv.innerHTML = '';
+  }
+
+  document.getElementById('detailModal').classList.add('active');
+}
+function hideDetail() { document.getElementById('detailModal').classList.remove('active'); }
+
+function isApproved(a) { return (a.conditions||[]).some(c => c.type === 'Approved' && c.status === 'True'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function showRegister() { document.getElementById('registerModal').classList.add('active'); }
+function hideRegister() { document.getElementById('registerModal').classList.remove('active'); }
+
+async function doRegister() {
+  const name = document.getElementById('regName').value.trim();
+  const url = document.getElementById('regURL').value.trim();
+  if (!name || !url) { toast(t('required'), 'error'); return; }
+  const skillsRaw = document.getElementById('regSkills').value.trim();
+  const skills = skillsRaw ? skillsRaw.split('\n').map(line => {
+    const [id, n] = line.split(',').map(s => s.trim());
+    return { id, name: n || id };
+  }) : [];
+  const tags = document.getElementById('regTags').value.split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    const res = await fetch('/api/v1/agents?namespace=default', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, url,
+        description: document.getElementById('regDesc').value.trim(),
+        version: document.getElementById('regVersion').value.trim(),
+        skills, tags, protocolVersion: '1.0'
+      })
+    });
+    if (res.status === 201) { toast(t('regOk')); hideRegister(); fetchAgents(); }
+    else { const txt = await res.text(); toast(t('regFail') + ': ' + txt, 'error'); }
+  } catch(e) { toast(t('netErr'), 'error'); }
+}
+async function removeAgent(name, ns) {
+  if (!confirm(t('delConfirm') + ' "' + name + '"?')) return;
+  try {
+    const res = await fetch(`/api/v1/agents/${name}?namespace=${ns}`, { method: 'DELETE' });
+    if (res.status === 204) { toast(t('delOk')); fetchAgents(); }
+    else { const txt = await res.text(); toast(t('delFail') + ': ' + txt, 'error'); }
+  } catch(e) { toast(t('netErr'), 'error'); }
+}
+async function approveAgent(name, ns) {
+  try {
+    const res = await fetch(`/api/v1/agents/${name}/approve?namespace=${ns}`, { method: 'POST' });
+    if (res.ok) { toast(t('approveOk')); fetchAgents(); }
+    else { const txt = await res.text(); toast(t('approveFail') + ': ' + txt, 'error'); }
+  } catch(e) { toast(t('netErr'), 'error'); }
+}
+function toast(msg, type) {
+  type = type || 'success';
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+async function init() { await fetchConfig(); fetchAgents(); }
+init();
+setInterval(fetchAgents, 10000);
+</script>
+</body>
+</html>

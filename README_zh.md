@@ -162,6 +162,12 @@ curl "http://localhost:8082/api/v1/search?q=hello&tag=demo"
 curl http://localhost:8082/.well-known/agent-card.json
 ```
 
+### 5. Dashboard
+
+访问 `http://localhost:8082/` 即可打开 Dashboard 界面，支持 Agent 列表、搜索过滤、注册、审批、详情查看，以及中英文切换。
+
+![Dashboard](docs/image/dashboard.png)
+
 ---
 
 ## 安装

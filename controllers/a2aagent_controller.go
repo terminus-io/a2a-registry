@@ -14,9 +14,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	a2aiov1 "github.com/terminus-io/a2a-registry/api/v1"
 	"github.com/terminus-io/a2a-registry/internal/healthcheck"
@@ -371,26 +370,10 @@ func isApproved(agent *a2aiov1.A2AAgent) bool {
 	return false
 }
 
-func (r *A2AAgentReconciler) mapRegistryToAgents(ctx context.Context, obj client.Object) []reconcile.Request {
-	agents := &a2aiov1.A2AAgentList{}
-	if err := r.List(ctx, agents); err != nil {
-		return nil
-	}
-	requests := make([]reconcile.Request, 0, len(agents.Items))
-	for _, agent := range agents.Items {
-		requests = append(requests, reconcile.Request{
-			NamespacedName: client.ObjectKey{
-				Namespace: agent.Namespace,
-				Name:      agent.Name,
-			},
-		})
-	}
-	return requests
-}
 
 func (r *A2AAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&a2aiov1.A2AAgent{}).
-		Watches(&a2aiov1.A2ARegistry{}, handler.EnqueueRequestsFromMapFunc(r.mapRegistryToAgents)).
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Complete(r)
 }

@@ -162,6 +162,12 @@ curl "http://localhost:8082/api/v1/search?q=hello&tag=demo"
 curl http://localhost:8082/.well-known/agent-card.json
 ```
 
+### 5. Dashboard
+
+Visit `http://localhost:8082/` to open the Dashboard, with agent listing, search, registration, approval, detail view, and i18n (zh/en) support.
+
+![Dashboard](docs/image/dashboard.png)
+
 ---
 
 ## Installation
