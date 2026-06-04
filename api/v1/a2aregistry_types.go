@@ -8,6 +8,7 @@ import (
 
 // DiscoveryConfig defines how agents are discovered.
 type DiscoveryConfig struct {
+	// +kubebuilder:validation:Enum=Cluster;Namespace
 	// Scope is the discovery scope: "Cluster" or "Namespace".
 	Scope string `json:"scope,omitempty"`
 
@@ -32,6 +33,7 @@ type RegistrationConfig struct {
 
 // HealthCheckDefaults defines cluster-wide health check defaults.
 type HealthCheckDefaults struct {
+	// +kubebuilder:validation:Minimum=10
 	// IntervalSeconds is the default health check interval.
 	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
 
@@ -41,6 +43,8 @@ type HealthCheckDefaults struct {
 
 // APIServerConfig defines the registry API server configuration.
 type APIServerConfig struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	// Port is the API server port.
 	Port int32 `json:"port,omitempty"`
 

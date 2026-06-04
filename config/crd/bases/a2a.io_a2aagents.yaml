@@ -110,9 +110,11 @@ spec:
                 properties:
                   failureThreshold:
                     format: int32
+                    minimum: 1
                     type: integer
                   intervalSeconds:
                     format: int32
+                    minimum: 10
                     type: integer
                   timeoutSeconds:
                     format: int32
@@ -145,6 +147,7 @@ spec:
                         type: string
                       type: array
                     id:
+                      minLength: 1
                       type: string
                     name:
                       type: string
@@ -237,6 +240,11 @@ spec:
                   - type
                   type: object
                 type: array
+              consecutiveFailures:
+                description: ConsecutiveFailures tracks the number of consecutive
+                  failed health checks.
+                format: int32
+                type: integer
               health:
                 description: Health is the current health status of the agent.
                 type: string
@@ -255,6 +263,11 @@ spec:
                 type: integer
               phase:
                 description: Phase is the current lifecycle phase of the agent.
+                type: string
+              registeredAt:
+                description: RegisteredAt is the timestamp when the agent was first
+                  registered.
+                format: date-time
                 type: string
             type: object
         type: object

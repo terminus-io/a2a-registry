@@ -4,146 +4,47 @@ kind: ClusterRole
 metadata:
   name: manager-role
 rules:
-  # A2AAgent resources
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aagents
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aagents/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aagents/status
-    verbs:
-      - get
-      - patch
-      - update
-  # A2ARegistry resources (cluster-scoped)
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aregistries
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aregistries/finalizers
-    verbs:
-      - update
-  - apiGroups:
-      - a2a.io
-    resources:
-      - a2aregistries/status
-    verbs:
-      - get
-      - patch
-      - update
-  # Secrets for auth credential resolution
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - get
-      - list
-      - watch
-  # Namespaces for cross-namespace discovery
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - get
-      - list
-      - watch
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: manager-role
-  namespace: system
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: controller-manager
-  namespace: system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: manager-rolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: manager-role
-subjects:
-  - kind: ServiceAccount
-    name: controller-manager
-    namespace: system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: manager-rolebinding
-  namespace: system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: manager-role
-subjects:
-  - kind: ServiceAccount
-    name: controller-manager
-    namespace: system
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - a2a.io
+  resources:
+  - a2aagents
+  - a2aregistries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - a2a.io
+  resources:
+  - a2aagents/finalizers
+  - a2aregistries/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - a2a.io
+  resources:
+  - a2aagents/status
+  - a2aregistries/status
+  verbs:
+  - get
+  - patch
+  - update

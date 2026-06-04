@@ -5,15 +5,22 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	a2aiov1 "github.com/terminus-io/a2a-registry/api/v1"
 	"github.com/terminus-io/a2a-registry/internal/healthcheck"
+	"github.com/terminus-io/a2a-registry/internal/metrics"
 	"github.com/terminus-io/a2a-registry/internal/registry"
 )
 
@@ -23,18 +30,20 @@ type A2AAgentReconciler struct {
 	Scheme            *runtime.Scheme
 	AgentCardResolver *registry.AgentCardResolver
 	HealthChecker     *healthcheck.Checker
+	Recorder          record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=a2a.io,resources=a2aagents,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=a2a.io,resources=a2aagents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=a2a.io,resources=a2aagents/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=a2a.io,resources=a2aregistries,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile handles the reconciliation loop for A2AAgent.
 func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the A2AAgent resource
 	agent := &a2aiov1.A2AAgent{}
 	err := r.Get(ctx, req.NamespacedName, agent)
 	if err != nil {
@@ -44,6 +53,49 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		logger.Error(err, "Failed to get A2AAgent resource.")
 		return ctrl.Result{}, err
+	}
+
+	// Handle finalizer logic
+	if !agent.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(agent, A2AFinalizer) {
+			controllerutil.RemoveFinalizer(agent, A2AFinalizer)
+			if err := r.Update(ctx, agent); err != nil {
+				logger.Error(err, "Failed to remove finalizer.")
+				return ctrl.Result{}, err
+			}
+			logger.Info("Finalizer removed, agent deletion allowed.")
+			metrics.DeregistrationsTotal.Inc()
+			r.Recorder.Event(agent, corev1.EventTypeNormal, "FinalizerRemoved", "Agent deletion completed.")
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(agent, A2AFinalizer) {
+		controllerutil.AddFinalizer(agent, A2AFinalizer)
+		if err := r.Update(ctx, agent); err != nil {
+			logger.Error(err, "Failed to add finalizer.")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Record registration time on first reconciliation
+	if agent.Status.RegisteredAt == nil {
+		now := metav1.Now()
+		agent.Status.RegisteredAt = &now
+		metrics.RegistrationsTotal.Inc()
+	}
+
+	// Check for URL conflict with other agents
+	if conflict := r.checkURLConflict(ctx, agent); conflict != "" {
+		agent.Status.Phase = a2aiov1.A2AAgentPhaseError
+		agent.Status.Health = a2aiov1.A2AAgentHealthUnhealthy
+		agent.Status.Message = conflict
+		if err := r.Status().Update(ctx, agent); err != nil {
+			logger.Error(err, "Failed to update URL conflict status.")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
 	// If agent is disabled, set phase to Pending and skip health checks
@@ -61,7 +113,41 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 
-	// Determine health check interval from agent spec, fallback to defaults
+	// Read registry config for registration policies
+	registryConfig := r.getRegistryConfig(ctx)
+	previousPhase := agent.Status.Phase
+
+	// Check if approval is required and agent is not yet approved
+	if registryConfig != nil && registryConfig.RequireApproval {
+		if !isApproved(agent) {
+			logger.Info("Agent requires approval, skipping health check.")
+			agent.Status.Phase = a2aiov1.A2AAgentPhasePending
+			agent.Status.Health = a2aiov1.A2AAgentHealthUnknown
+			agent.Status.Message = "Waiting for approval."
+			agent.Status.Conditions = MergeCondition(agent.Status.Conditions, metav1.Condition{
+				Type:               ConditionTypeApproved,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: agent.Generation,
+				LastTransitionTime: metav1.Now(),
+				Reason:             "PendingApproval",
+				Message:            "Agent requires manual approval.",
+			})
+			if err := r.Status().Update(ctx, agent); err != nil {
+				logger.Error(err, "Failed to update approval status.")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		agent.Status.Conditions = MergeCondition(agent.Status.Conditions, metav1.Condition{
+			Type:               ConditionTypeApproved,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: agent.Generation,
+			LastTransitionTime: metav1.Now(),
+			Reason:             "Approved",
+			Message:            "Agent has been approved.",
+		})
+	}
+
 	intervalSeconds := int32(60)
 	if agent.Spec.HealthCheck != nil {
 		if agent.Spec.HealthCheck.IntervalSeconds > 0 {
@@ -69,55 +155,85 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 	}
 
-	// Perform health check
-	logger.Info("Performing health check for agent.", "url", agent.Spec.URL)
-	healthResult := r.HealthChecker.Check(ctx, agent)
+	auth := r.buildAuthConfig(ctx, agent)
 
-	// Update status based on health check result
+	var healthResult *healthcheck.Result
 	now := metav1.Now()
 
-	if healthResult.Healthy {
+	if registryConfig != nil && !registryConfig.RequireHealthCheck {
+		logger.Info("Health check disabled by registry config.")
 		agent.Status.Phase = a2aiov1.A2AAgentPhaseReady
 		agent.Status.Health = a2aiov1.A2AAgentHealthHealthy
 		agent.Status.LastHeartbeat = &now
-		agent.Status.Message = fmt.Sprintf("Health check passed in %s.", healthResult.Latency)
-
-		// Update agent card hash if it changed
-		if healthResult.CardHash != "" {
-			agent.Status.AgentCardHash = healthResult.CardHash
-		}
+		agent.Status.Message = "Health check disabled by registry configuration."
+		agent.Status.ConsecutiveFailures = 0
 	} else {
-		agent.Status.Health = a2aiov1.A2AAgentHealthUnhealthy
-		agent.Status.Message = fmt.Sprintf("Health check failed: %s", healthResult.Error)
+		logger.Info("Performing health check for agent.", "url", agent.Spec.URL)
+		healthResult = r.HealthChecker.CheckWithAuth(ctx, agent, auth)
 
-		// Only mark as Unreachable after consecutive failures
-		if agent.Status.Phase == a2aiov1.A2AAgentPhaseReady ||
-			agent.Status.Phase == a2aiov1.A2AAgentPhasePending ||
-			agent.Status.Phase == "" {
-			// Check failure threshold
+		metrics.HealthCheckDuration.Observe(healthResult.Latency.Seconds())
+		if !healthResult.Healthy {
+			metrics.HealthCheckFailuresTotal.Inc()
+		}
+
+		if healthResult.Healthy {
+			agent.Status.Phase = a2aiov1.A2AAgentPhaseReady
+			agent.Status.Health = a2aiov1.A2AAgentHealthHealthy
+			agent.Status.LastHeartbeat = &now
+			agent.Status.Message = fmt.Sprintf("Health check passed in %s.", healthResult.Latency)
+
+			if healthResult.CardHash != "" {
+				agent.Status.AgentCardHash = healthResult.CardHash
+			}
+
+			agent.Status.ConsecutiveFailures = 0
+
+			if previousPhase == a2aiov1.A2AAgentPhaseError ||
+				previousPhase == a2aiov1.A2AAgentPhaseUnreachable {
+				r.Recorder.Eventf(agent, corev1.EventTypeNormal, "HealthCheckRecovered",
+					"Agent recovered from %s to Ready.", previousPhase)
+			}
+
+			if registryConfig != nil && registryConfig.RequireCardMatch && healthResult.Card != nil {
+				if mismatch := checkCardMatch(agent, healthResult.Card); mismatch != "" {
+					agent.Status.Health = a2aiov1.A2AAgentHealthUnhealthy
+					agent.Status.Phase = a2aiov1.A2AAgentPhaseError
+					agent.Status.Message = fmt.Sprintf("Agent card mismatch: %s", mismatch)
+					r.Recorder.Eventf(agent, corev1.EventTypeWarning, "CardMismatch",
+						"Agent card does not match spec: %s", mismatch)
+				}
+			}
+		} else {
+			agent.Status.Health = a2aiov1.A2AAgentHealthUnhealthy
+			agent.Status.Message = fmt.Sprintf("Health check failed: %s", healthResult.Error)
+
 			failureThreshold := int32(3)
 			if agent.Spec.HealthCheck != nil && agent.Spec.HealthCheck.FailureThreshold > 0 {
 				failureThreshold = agent.Spec.HealthCheck.FailureThreshold
 			}
 
-			// Simple failure tracking: if we just failed, set to Error first,
-			// only set to Unreachable after threshold
-			if agent.Status.Phase == a2aiov1.A2AAgentPhaseError {
+			agent.Status.ConsecutiveFailures++
+			if agent.Status.ConsecutiveFailures >= failureThreshold {
 				agent.Status.Phase = a2aiov1.A2AAgentPhaseUnreachable
+				if previousPhase != a2aiov1.A2AAgentPhaseUnreachable {
+					r.Recorder.Eventf(agent, corev1.EventTypeWarning, "AgentUnreachable",
+						"Agent is unreachable after %d consecutive failures: %s",
+						agent.Status.ConsecutiveFailures, healthResult.Error)
+				}
 			} else {
 				agent.Status.Phase = a2aiov1.A2AAgentPhaseError
+				if previousPhase != a2aiov1.A2AAgentPhaseError {
+					r.Recorder.Eventf(agent, corev1.EventTypeWarning, "HealthCheckFailed",
+						"Health check failed: %s", healthResult.Error)
+				}
 			}
-			_ = failureThreshold // For future use with condition-based failure counting
 		}
 	}
 
-	// Update observed generation
 	agent.Status.ObservedGeneration = agent.Generation
+	isHealthy := agent.Status.Health == a2aiov1.A2AAgentHealthHealthy
+	r.updateConditions(agent, isHealthy)
 
-	// Update conditions
-	r.updateConditions(agent, healthResult.Healthy)
-
-	// Update status
 	if err := r.Status().Update(ctx, agent); err != nil {
 		logger.Error(err, "Failed to update A2AAgent status.")
 		return ctrl.Result{}, err
@@ -128,15 +244,90 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		"health", agent.Status.Health,
 	)
 
-	// Requeue after the health check interval
 	return ctrl.Result{RequeueAfter: time.Duration(intervalSeconds) * time.Second}, nil
 }
 
-// updateConditions updates the standard K8s conditions on the agent status.
+// checkURLConflict checks if any other agent uses the same URL.
+func (r *A2AAgentReconciler) checkURLConflict(ctx context.Context, agent *a2aiov1.A2AAgent) string {
+	all := &a2aiov1.A2AAgentList{}
+	if err := r.List(ctx, all); err != nil {
+		return ""
+	}
+	for _, a := range all.Items {
+		if a.Name == agent.Name && a.Namespace == agent.Namespace {
+			continue // skip self
+		}
+		if a.Spec.URL == agent.Spec.URL {
+			return fmt.Sprintf("URL conflict: %q is already registered by agent %q in namespace %q",
+				agent.Spec.URL, a.Name, a.Namespace)
+		}
+	}
+	return ""
+}
+
+func (r *A2AAgentReconciler) getRegistryConfig(ctx context.Context) *a2aiov1.RegistrationConfig {
+	registries := &a2aiov1.A2ARegistryList{}
+	if err := r.List(ctx, registries); err != nil || len(registries.Items) == 0 {
+		return nil
+	}
+	return &registries.Items[0].Spec.Registration
+}
+
+func checkCardMatch(agent *a2aiov1.A2AAgent, card *a2a.AgentCard) string {
+	if agent.Spec.Name != "" && agent.Spec.Name != card.Name {
+		return fmt.Sprintf("name mismatch: spec=%q card=%q", agent.Spec.Name, card.Name)
+	}
+	if agent.Spec.Description != "" && agent.Spec.Description != card.Description {
+		return "description mismatch"
+	}
+	if agent.Spec.Version != "" && agent.Spec.Version != card.Version {
+		return fmt.Sprintf("version mismatch: spec=%q card=%q", agent.Spec.Version, card.Version)
+	}
+	for _, specSkill := range agent.Spec.Skills {
+		found := false
+		for _, cardSkill := range card.Skills {
+			if specSkill.ID == cardSkill.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Sprintf("skill %q in spec not found in agent card", specSkill.ID)
+		}
+	}
+	return ""
+}
+
+func (r *A2AAgentReconciler) buildAuthConfig(ctx context.Context, agent *a2aiov1.A2AAgent) *registry.AuthConfig {
+	if agent.Spec.Authentication == nil {
+		return nil
+	}
+	auth := &registry.AuthConfig{
+		Schemes: agent.Spec.Authentication.Schemes,
+	}
+	if agent.Spec.Authentication.SecretRef != nil {
+		secret, err := r.readSecret(ctx, agent.Namespace, agent.Spec.Authentication.SecretRef.Name)
+		if err != nil {
+			ctrl.Log.WithName("a2aagent-controller").Error(err, "Failed to read auth secret",
+				"secret", agent.Spec.Authentication.SecretRef.Name)
+			return auth
+		}
+		auth.SecretData = secret
+	}
+	return auth
+}
+
+func (r *A2AAgentReconciler) readSecret(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		return nil, err
+	}
+	return secret.Data, nil
+}
+
 func (r *A2AAgentReconciler) updateConditions(agent *a2aiov1.A2AAgent, healthy bool) {
 	now := metav1.Now()
 
-	// HealthChecked condition
 	healthCondition := metav1.Condition{
 		Type:               "HealthChecked",
 		ObservedGeneration: agent.Generation,
@@ -152,7 +343,6 @@ func (r *A2AAgentReconciler) updateConditions(agent *a2aiov1.A2AAgent, healthy b
 		healthCondition.Message = agent.Status.Message
 	}
 
-	// Ready condition
 	readyCondition := metav1.Condition{
 		Type:               "Ready",
 		ObservedGeneration: agent.Generation,
@@ -168,25 +358,39 @@ func (r *A2AAgentReconciler) updateConditions(agent *a2aiov1.A2AAgent, healthy b
 		readyCondition.Message = agent.Status.Message
 	}
 
-	// Merge or append conditions
-	agent.Status.Conditions = r.mergeCondition(agent.Status.Conditions, healthCondition)
-	agent.Status.Conditions = r.mergeCondition(agent.Status.Conditions, readyCondition)
+	agent.Status.Conditions = MergeCondition(agent.Status.Conditions, healthCondition)
+	agent.Status.Conditions = MergeCondition(agent.Status.Conditions, readyCondition)
 }
 
-// mergeCondition updates an existing condition or appends a new one.
-func (r *A2AAgentReconciler) mergeCondition(conditions []metav1.Condition, newCondition metav1.Condition) []metav1.Condition {
-	for i, c := range conditions {
-		if c.Type == newCondition.Type {
-			conditions[i] = newCondition
-			return conditions
+func isApproved(agent *a2aiov1.A2AAgent) bool {
+	for _, c := range agent.Status.Conditions {
+		if c.Type == ConditionTypeApproved && c.Status == metav1.ConditionTrue {
+			return true
 		}
 	}
-	return append(conditions, newCondition)
+	return false
 }
 
-// SetupWithManager sets up the controller with the Manager.
+func (r *A2AAgentReconciler) mapRegistryToAgents(ctx context.Context, obj client.Object) []reconcile.Request {
+	agents := &a2aiov1.A2AAgentList{}
+	if err := r.List(ctx, agents); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(agents.Items))
+	for _, agent := range agents.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKey{
+				Namespace: agent.Namespace,
+				Name:      agent.Name,
+			},
+		})
+	}
+	return requests
+}
+
 func (r *A2AAgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&a2aiov1.A2AAgent{}).
+		Watches(&a2aiov1.A2ARegistry{}, handler.EnqueueRequestsFromMapFunc(r.mapRegistryToAgents)).
 		Complete(r)
 }

@@ -67,7 +67,7 @@ func main() {
 	checker := healthcheck.NewChecker(resolver)
 
 	// Registry API server (runs as a Runnable within the manager)
-	apiServer := registry.NewServer(mgr.GetClient(), 8082, "0.0.0.0")
+	apiServer := registry.NewServer(mgr.GetClient(), registryAPIAddr)
 	if err := mgr.Add(apiServer); err != nil {
 		setupLog.Error(err, "unable to add registry API server")
 		os.Exit(1)
@@ -79,6 +79,7 @@ func main() {
 		Scheme:            mgr.GetScheme(),
 		AgentCardResolver: resolver,
 		HealthChecker:     checker,
+		Recorder:          mgr.GetEventRecorderFor("a2aagent-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "A2AAgent")
 		os.Exit(1)
@@ -89,6 +90,7 @@ func main() {
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		APIServer: apiServer,
+		Recorder:  mgr.GetEventRecorderFor("a2aregistry-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "A2ARegistry")
 		os.Exit(1)
@@ -98,6 +100,10 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = a2aiov1.SetupA2AAgentWebhook(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "A2AAgent")
+			os.Exit(1)
+		}
+		if err = a2aiov1.SetupA2ARegistryWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "A2ARegistry")
 			os.Exit(1)
 		}
 	}

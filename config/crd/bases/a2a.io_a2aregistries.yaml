@@ -63,6 +63,8 @@ spec:
                   port:
                     description: Port is the API server port.
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
                   tlsCertRef:
                     description: TLSCertRef references a TLS certificate secret.
@@ -93,6 +95,9 @@ spec:
                     type: array
                   scope:
                     description: 'Scope is the discovery scope: "Cluster" or "Namespace".'
+                    enum:
+                    - Cluster
+                    - Namespace
                     type: string
                 type: object
               healthCheck:
@@ -101,6 +106,7 @@ spec:
                   intervalSeconds:
                     description: IntervalSeconds is the default health check interval.
                     format: int32
+                    minimum: 10
                     type: integer
                   timeoutSeconds:
                     description: TimeoutSeconds is the default health check timeout.

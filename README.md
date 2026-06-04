@@ -20,8 +20,11 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
   - [Creating a Registry](#creating-a-registry)
   - [Registering an Agent](#registering-an-agent)
   - [Discovering Agents via the API](#discovering-agents-via-the-api)
+  - [Agent Approval Workflow](#agent-approval-workflow)
+  - [Authenticated Agent Cards](#authenticated-agent-cards)
 - [API Reference](#api-reference)
 - [Configuration](#configuration)
+- [Monitoring](#monitoring)
 - [Development](#development)
 - [Examples](#examples)
 - [License](#license)
@@ -31,12 +34,21 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 ## Features
 
 - **Kubernetes-native** — Agents are defined as CRDs (`A2AAgent`, `A2ARegistry`). No external database needed; Kubernetes is the source of truth.
+- **HTTP Registration API** — Agents can self-register via `POST /api/v1/agents` and deregister via `DELETE /api/v1/agents/{name}`, in addition to `kubectl apply`.
 - **Automatic Health Checking** — Periodically fetches each agent's [Agent Card](https://github.com/google/A2A/blob/main/specification/a2a.json) from `/.well-known/agent-card.json` and tracks lifecycle phases: `Pending → Ready → Error → Unreachable`.
-- **Built-in Discovery API** — A RESTful HTTP API server (port `8082`) runs inside the operator, exposing endpoints for agent listing, search, and card retrieval.
-- **Flexible Discovery Scope** — Configure discovery at `Cluster` or `Namespace` level, with optional label selectors and namespace filters.
-- **Admission Webhooks** — Validating and mutating webhooks ensure agent specs are correct (URL format, unique skill IDs, default health check settings).
+- **Configurable Failure Threshold** — Per-agent `failureThreshold` controls how many consecutive failures before an agent is marked `Unreachable`.
+- **URL Conflict Detection** — Prevents duplicate agent URLs from polluting the registry. Conflicting agents are marked `Error`.
+- **Built-in Discovery API** — A RESTful HTTP API server (port `8082`) runs inside the operator, exposing endpoints for agent listing, search, registration, and card retrieval.
+- **Flexible Discovery Scope** — Configure discovery at `Cluster` or `Namespace` level, with label selectors and namespace filters — both enforced at the API level and the Kubernetes API level.
+- **Registration Policies** — Fine-grained control over `requireApproval`, `requireHealthCheck`, and `requireCardMatch` per registry.
+- **Card Matching** — Optionally validates that a fetched agent card matches the CR spec (name, description, version, skills).
+- **Approval Workflow** — When `requireApproval` is enabled, new agents stay `Pending` until an operator adds an `Approved` condition.
+- **Agent Auto-Pruning** — Agents that remain `Unreachable` for 7 consecutive days are automatically removed.
+- **Authentication Support** — Agents behind authenticated endpoints (bearer token, basic auth) can be health-checked by referencing a Kubernetes Secret.
+- **Admission Webhooks** — Validating and mutating webhooks enforce spec correctness for both `A2AAgent` and `A2ARegistry` resources, with CRD-level schema validation as a safety net.
 - **Multi-Architecture** — Pre-built Docker images support `linux/amd64` and `linux/arm64`.
-- **Prometheus Metrics** — Exposes metrics on port `8080` for monitoring.
+- **Prometheus Metrics** — Exposes metrics on port `8080` for monitoring (agent counts, health check latency/failures, registrations, API latency).
+- **Kubernetes Events** — Key state transitions (Ready, Unreachable, CardMismatch, AgentPruned) emit Kubernetes Events for audit trails.
 - **Leader Election** — Optional leader election for HA deployments.
 
 ---
@@ -66,7 +78,7 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 │            ▼                ▼                        │
 │  ┌──────────────────┐  ┌──────────────────┐         │
 │  │   Agent Pod A    │  │  External Client  │        │
-│  │  /.well-known/   │  │  GET /api/v1/     │        │
+│  │  /.well-known/   │  │  POST /api/v1/    │        │
 │  │  agent-card.json │  │  agents           │        │
 │  └──────────────────┘  └──────────────────┘         │
 │                                                      │
@@ -82,11 +94,12 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 
 | Component | Description |
 |---|---|
-| **A2AAgent Controller** | Watches `A2AAgent` CRs, performs health checks by fetching agent cards, updates status conditions and phase. |
-| **A2ARegistry Controller** | Watches `A2ARegistry` CRs, counts registered/healthy agents, pushes discovery configuration to the API server. |
-| **Registry API Server** | HTTP server that serves the registry's own Agent Card and provides agent discovery/search endpoints. Runs on all replicas (no leader election required). |
-| **Agent Card Resolver** | Fetches and parses agent cards from `/.well-known/agent-card.json` (with fallback to `/.well-known/agent.json`). |
-| **Admission Webhooks** | Validate agent specs on create/update, and set default values for protocol version and health check config. |
+| **A2AAgent Controller** | Watches `A2AAgent` CRs, performs health checks by fetching agent cards, enforces registration policies (approval, card matching, URL uniqueness), updates status conditions and phase. |
+| **A2ARegistry Controller** | Watches `A2ARegistry` CRs, counts registered/healthy agents, pushes discovery configuration to the API server, auto-prunes stale unreachable agents. |
+| **Registry API Server** | HTTP server that serves the registry's own Agent Card, provides agent discovery/search endpoints, and handles agent registration/deregistration via HTTP. Runs on all replicas (no leader election required). |
+| **Agent Card Resolver** | Fetches and parses agent cards from `/.well-known/agent-card.json` (with fallback to `/.well-known/agent.json`). Supports bearer token and basic authentication. |
+| **Admission Webhooks** | Validate and default specs for both `A2AAgent` and `A2ARegistry` resources on create/update. |
+| **Metrics & Events** | Prometheus metrics on `:8080` for agent counts, health check latency, registrations, and API latency. Kubernetes Events emitted for lifecycle transitions. |
 
 ---
 
@@ -102,7 +115,6 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 ### 1. Install the CRDs and deploy the operator
 
 ```bash
-# Clone the repository
 git clone https://github.com/terminus-io/a2a-registry.git
 cd a2a-registry
 
@@ -122,18 +134,32 @@ kubectl apply -f config/samples/a2a.io_v1_a2aregistry.yaml
 ### 3. Register an agent
 
 ```bash
+# Via kubectl
 kubectl apply -f config/samples/a2a.io_v1_a2aagent.yaml
+
+# OR via the HTTP API
+kubectl port-forward -n a2a-registry-system svc/a2a-registry-controller-manager 8082:8082
+curl -X POST http://localhost:8082/api/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Agent",
+    "url": "http://my-agent.default.svc.cluster.local:9001",
+    "skills": [{"id": "hello", "name": "Hello"}],
+    "tags": ["demo"]
+  }'
 ```
 
 ### 4. Query the registry API
 
 ```bash
 # List all agents
-kubectl port-forward -n a2a-registry-system svc/a2a-registry-controller-manager 8082:8082
 curl http://localhost:8082/api/v1/agents
 
 # Search agents
 curl "http://localhost:8082/api/v1/search?q=hello&tag=demo"
+
+# Get registry's own agent card
+curl http://localhost:8082/.well-known/agent-card.json
 ```
 
 ---
@@ -151,9 +177,7 @@ make docker-push    # pushes to your registry
 ### Using pre-built images
 
 ```bash
-# Set your image repository
 export IMG=your-registry/a2a-registry:latest
-
 make docker-build
 make docker-push
 make deploy
@@ -188,19 +212,29 @@ metadata:
 spec:
   discovery:
     scope: "Cluster"           # "Cluster" or "Namespace"
-    # labelSelector: "app=my-agent"
+    labelSelector: "app=my-agent"
     # namespaces: ["ns1", "ns2"]
   registration:
-    requireApproval: false
-    requireHealthCheck: true
-    requireCardMatch: false
+    requireApproval: false     # Require manual approval for new agents
+    requireHealthCheck: true   # Require reachable URL before marking Ready
+    requireCardMatch: false    # Validate fetched card matches spec
   healthCheck:
-    intervalSeconds: 120
+    intervalSeconds: 120       # Cluster-wide default interval
     timeoutSeconds: 15
   apiServer:
     port: 8082
     bindAddress: "0.0.0.0"
+    # tlsCertRef:              # Optional TLS certificate
+    #   name: registry-tls
 ```
+
+**Registration policies:**
+
+| Field | Default | Description |
+|---|---|---|
+| `requireApproval` | `false` | When true, new agents stay `Pending` until an operator adds an `Approved` condition to their status. |
+| `requireHealthCheck` | `true` | When false, agents are marked `Ready` immediately without health checks. |
+| `requireCardMatch` | `false` | When true, the fetched agent card must match the CR spec (name, description, version, skills). Mismatches cause `Error` phase. |
 
 ### Registering an Agent
 
@@ -239,6 +273,11 @@ spec:
     - "demo"
     - "example"
   enabled: true
+  authentication:
+    schemes:
+      - "bearer"
+    secretRef:
+      name: "my-agent-credentials"
   healthCheck:
     intervalSeconds: 60
     timeoutSeconds: 10
@@ -253,7 +292,9 @@ spec:
 | `spec.skills` | List of skills the agent can perform, each with a unique `id` |
 | `spec.enabled` | Set to `false` to disable health checking and remove from discovery |
 | `spec.capabilities` | Declare `streaming` and/or `pushNotifications` support |
+| `spec.authentication` | Optional authentication config (`schemes` + `secretRef`) for health-checking protected agent endpoints |
 | `spec.healthCheck` | Per-agent health check override (defaults: interval=60s, timeout=10s, failureThreshold=3) |
+| `spec.healthCheck.failureThreshold` | Consecutive failures before agent becomes `Unreachable` (default: 3) |
 | `spec.tags` | Arbitrary tags for searching and filtering |
 
 **Status fields:**
@@ -264,7 +305,9 @@ spec:
 | `status.health` | Health: `Healthy`, `Unhealthy`, `Unknown` |
 | `status.lastHeartbeat` | Timestamp of the last successful health check |
 | `status.agentCardHash` | SHA256 hash of the fetched agent card |
-| `status.conditions` | Kubernetes standard conditions |
+| `status.consecutiveFailures` | Number of consecutive failed health checks |
+| `status.registeredAt` | Timestamp when the agent was first registered |
+| `status.conditions` | Kubernetes standard conditions (`HealthChecked`, `Ready`, `Approved`) |
 
 ### Discovering Agents via the API
 
@@ -279,11 +322,38 @@ GET /api/v1/agents?tags=demo,example
 GET /api/v1/agents?skill=hello_world
 ```
 
+#### Register an agent
+
+```bash
+POST /api/v1/agents
+Content-Type: application/json
+
+{
+  "name": "My Agent",
+  "url": "http://agent.default.svc.cluster.local:9001",
+  "description": "An example agent",
+  "version": "1.0.0",
+  "skills": [
+    {"id": "greeting", "name": "Greeting"}
+  ],
+  "tags": ["demo"],
+  "streaming": false,
+  "pushNotifications": false,
+  "protocolVersion": "1.0"
+}
+```
+
 #### Get a specific agent
 
 ```bash
 GET /api/v1/agents/{name}
 GET /api/v1/agents/{name}/card    # Returns the A2A Agent Card
+```
+
+#### Deregister an agent
+
+```bash
+DELETE /api/v1/agents/{name}?namespace=default
 ```
 
 #### Search agents
@@ -302,7 +372,59 @@ GET /.well-known/agent-card.json
 GET /.well-known/agent.json
 ```
 
-The registry advertises itself as an agent with "Agent Discovery" and "Agent Search" skills, enabling other agents to discover peers through the registry.
+The registry advertises itself as an agent with "Agent Discovery" and "Agent Search" skills.
+
+### Agent Approval Workflow
+
+When `registration.requireApproval` is enabled in the registry config:
+
+1. New agents are created in `Pending` phase with status `"Waiting for approval."`
+2. An operator approves the agent by patching its status:
+
+```bash
+kubectl patch a2aa my-agent --type=merge --subresource=status -p \
+  '{"status":{"conditions":[{"type":"Approved","status":"True","reason":"Approved","message":"Agent approved."}]}}'
+```
+
+3. The next reconciliation detects the `Approved` condition and proceeds with health checks.
+
+### Authenticated Agent Cards
+
+If an agent's `/.well-known/agent-card.json` requires authentication:
+
+```yaml
+spec:
+  authentication:
+    schemes:
+      - "bearer"              # or "basic"
+    secretRef:
+      name: "agent-auth"      # Kubernetes Secret in the same namespace
+```
+
+**Bearer token secret:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-auth
+type: Opaque
+stringData:
+  token: "my-bearer-token"
+```
+
+**Basic auth secret:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-auth
+type: Opaque
+stringData:
+  username: "myuser"
+  password: "mypass"
+```
 
 ---
 
@@ -327,7 +449,7 @@ kubectl get a2aa -o wide            # Show additional columns (Phase, Health, UR
 ### Agent Lifecycle
 
 ```
-  [Create] ──► Pending ──► Ready ◄── (health check passes)
+  [Create] ──► Pending ──► Ready ◄──── health check passes
                   │            │
                   ▼            ▼
                 Error    Unreachable
@@ -336,6 +458,24 @@ kubectl get a2aa -o wide            # Show additional columns (Phase, Health, UR
                         ▼
                       Ready (after recovery)
 ```
+
+- **Pending**: Initial state, or waiting for approval, or manually disabled.
+- **Ready**: Health check passed; agent is discoverable.
+- **Error**: Health check failed (fewer than `failureThreshold` consecutive failures).
+- **Unreachable**: Health check failed for `failureThreshold` consecutive times. After 7 days in this state, the agent is automatically pruned.
+
+### HTTP API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/agents` | List all agents (filters: `?namespace=`, `?tags=`, `?skill=`) |
+| `POST` | `/api/v1/agents` | Register a new agent (JSON body) |
+| `GET` | `/api/v1/agents/{name}` | Get a single agent |
+| `DELETE` | `/api/v1/agents/{name}` | Deregister an agent |
+| `GET` | `/api/v1/agents/{name}/card` | Get an agent's A2A Agent Card |
+| `GET` | `/api/v1/search` | Search agents (`?q=`, `?tag=`, `?skill=`, `?capability=`) |
+| `GET` | `/.well-known/agent-card.json` | Registry's own Agent Card |
+| `GET` | `/.well-known/agent.json` | Registry's Agent Card (legacy path) |
 
 ---
 
@@ -359,24 +499,46 @@ kubectl get a2aa -o wide            # Show additional columns (Phase, Health, UR
 
 ---
 
+## Monitoring
+
+### Prometheus Metrics
+
+All metrics are exposed on port `:8080` with the `a2a_registry_` prefix.
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `a2a_registry_agent_count` | GaugeVec | `phase`, `health` | Number of agents by phase and health |
+| `a2a_registry_health_check_duration_seconds` | Histogram | — | Agent health check latency |
+| `a2a_registry_health_check_failures_total` | Counter | — | Total failed health checks |
+| `a2a_registry_agent_card_fetch_errors_total` | Counter | — | Total agent card fetch errors |
+| `a2a_registry_registrations_total` | Counter | — | Total agent registrations |
+| `a2a_registry_deregistrations_total` | Counter | — | Total agent deregistrations |
+| `a2a_registry_api_request_duration_seconds` | HistogramVec | `endpoint`, `method` | Registry API request latency |
+
+### Kubernetes Events
+
+State transitions emit Kubernetes Events visible via `kubectl describe a2aa <name>`:
+
+| Event | Type | Meaning |
+|---|---|---|
+| `FinalizerRemoved` | Normal | Agent deletion completed |
+| `HealthCheckRecovered` | Normal | Agent recovered from Error/Unreachable to Ready |
+| `CardMismatch` | Warning | Fetched card doesn't match spec |
+| `HealthCheckFailed` | Warning | Single health check failure |
+| `AgentUnreachable` | Warning | Agent marked Unreachable after threshold failures |
+| `AgentPruned` | Normal | Stale agent auto-removed after 7 days |
+
+---
+
 ## Development
 
 ```bash
-# Build the binary
-make build
-
-# Run locally (outside cluster)
-make run
-
-# Run tests with envtest
-make test
-
-# Generate CRD manifests and DeepCopy methods
-make generate manifests
-
-# Format and vet
-make fmt
-make vet
+make build          # Build the binary
+make run            # Run locally (outside cluster)
+make test           # Run tests with envtest
+make generate manifests  # Generate CRD manifests and DeepCopy methods
+make fmt            # Format code
+make vet            # Vet code
 
 # Build and push Docker image
 export IMG=your-registry/a2a-registry:latest
@@ -399,8 +561,10 @@ make docker-push
 ├── controllers/               # Reconciliation logic
 ├── internal/
 │   ├── healthcheck/           # Agent health checking
-│   └── registry/              # API server + agent card resolver
+│   ├── metrics/               # Prometheus metrics definitions
+│   └── registry/              # API server + handler + agent card resolver
 ├── examples/hello-agent/      # Example A2A agent
+├── deploy/helm/a2a-registry/  # Helm chart
 ├── vendor/                    # Vendored dependencies
 ├── Dockerfile                 # Multi-stage container build
 └── Makefile                   # Build & deploy targets

@@ -33,7 +33,10 @@ type A2AAgentCapabilities struct {
 
 // A2AAgentSkillSpec defines a skill that an agent can perform.
 type A2AAgentSkillSpec struct {
-	ID          string   `json:"id"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+	// +kubebuilder:validation:Required
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
@@ -54,13 +57,16 @@ type A2AProviderInfo struct {
 
 // HealthCheckConfig defines health check parameters for an agent.
 type HealthCheckConfig struct {
-	IntervalSeconds  int32 `json:"intervalSeconds,omitempty"`
-	TimeoutSeconds   int32 `json:"timeoutSeconds,omitempty"`
+	// +kubebuilder:validation:Minimum=10
+	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
+	TimeoutSeconds  int32 `json:"timeoutSeconds,omitempty"`
+	// +kubebuilder:validation:Minimum=1
 	FailureThreshold int32 `json:"failureThreshold,omitempty"`
 }
 
 // A2AAgentSpec defines the desired state of A2AAgent.
 type A2AAgentSpec struct {
+	// +kubebuilder:validation:Required
 	// Name is the display name of the agent.
 	Name string `json:"name"`
 
@@ -70,6 +76,7 @@ type A2AAgentSpec struct {
 	// Version is the version of the agent.
 	Version string `json:"version,omitempty"`
 
+	// +kubebuilder:validation:Required
 	// URL is the base endpoint URL of the agent.
 	URL string `json:"url"`
 
@@ -123,6 +130,12 @@ type A2AAgentStatus struct {
 
 	// ObservedGeneration is the generation observed by the controller.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// ConsecutiveFailures tracks the number of consecutive failed health checks.
+	ConsecutiveFailures int32 `json:"consecutiveFailures,omitempty"`
+
+	// RegisteredAt is the timestamp when the agent was first registered.
+	RegisteredAt *metav1.Time `json:"registeredAt,omitempty"`
 
 	// Conditions represent the current state of the agent.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -279,6 +292,11 @@ func (in *A2AAgentStatus) DeepCopyInto(out *A2AAgentStatus) {
 	*out = *in
 	if in.LastHeartbeat != nil {
 		in, out := &in.LastHeartbeat, &out.LastHeartbeat
+		*out = new(metav1.Time)
+		**out = **in
+	}
+	if in.RegisteredAt != nil {
+		in, out := &in.RegisteredAt, &out.RegisteredAt
 		*out = new(metav1.Time)
 		**out = **in
 	}

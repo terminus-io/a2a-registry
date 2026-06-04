@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"k8s.io/apimachinery/pkg/labels"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	a2aiov1 "github.com/terminus-io/a2a-registry/api/v1"
+	"github.com/terminus-io/a2a-registry/internal/metrics"
 )
 
 // Handler holds the HTTP handlers for the registry API.
@@ -84,6 +87,17 @@ type SkillEntry struct {
 	Description string `json:"description,omitempty"`
 }
 
+// labelSelectorFromConfig returns a list option for the configured label selector, or nil.
+func labelSelectorFromConfig(config *DiscoveryConfig) client.ListOption {
+	if config != nil && config.LabelSelector != "" {
+		sel, err := labels.Parse(config.LabelSelector)
+		if err == nil {
+			return client.MatchingLabelsSelector{Selector: sel}
+		}
+	}
+	return nil
+}
+
 // ListAgents lists all registered agents with optional filtering.
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -99,6 +113,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		listOpts = append(listOpts, client.InNamespace(namespaceFilter))
 	} else if h.config != nil && h.config.Scope == "Namespace" && len(h.config.Namespaces) > 0 {
 		// Only list from configured namespaces; for simplicity list all and filter below
+	}
+
+	// Apply label selector from discovery config
+	if opt := labelSelectorFromConfig(h.config); opt != nil {
+		listOpts = append(listOpts, opt)
 	}
 
 	if err := h.client.List(ctx, agents, listOpts...); err != nil {
@@ -211,13 +230,157 @@ func (h *Handler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(card)
 }
 
+// RegisterRequest is the payload for the agent registration endpoint.
+type RegisterRequest struct {
+	Name            string                 `json:"name"`
+	Description     string                 `json:"description,omitempty"`
+	Version         string                 `json:"version,omitempty"`
+	URL             string                 `json:"url"`
+	Skills          []SkillEntry           `json:"skills,omitempty"`
+	Tags            []string               `json:"tags,omitempty"`
+	Streaming       bool                   `json:"streaming,omitempty"`
+	PushNotifications bool                 `json:"pushNotifications,omitempty"`
+	ProtocolVersion string                 `json:"protocolVersion,omitempty"`
+}
+
+// RegisterAgent handles agent registration via HTTP POST.
+func (h *Handler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.URL == "" {
+		http.Error(w, "name and url are required", http.StatusBadRequest)
+		return
+	}
+
+	// Generate a K8s-safe name from the agent name
+	k8sName := generateK8sName(req.Name)
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	// Check for URL conflict
+	existing := &a2aiov1.A2AAgentList{}
+	if err := h.client.List(ctx, existing); err == nil {
+		for _, a := range existing.Items {
+			if a.Spec.URL == req.URL {
+				http.Error(w, fmt.Sprintf("URL %q is already registered by agent %q", req.URL, a.Name), http.StatusConflict)
+				return
+			}
+		}
+	}
+
+	skills := make([]a2aiov1.A2AAgentSkillSpec, 0, len(req.Skills))
+	for _, s := range req.Skills {
+		skills = append(skills, a2aiov1.A2AAgentSkillSpec{
+			ID:          s.ID,
+			Name:        s.Name,
+			Description: s.Description,
+		})
+	}
+
+	agent := &a2aiov1.A2AAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      k8sName,
+			Namespace: namespace,
+		},
+		Spec: a2aiov1.A2AAgentSpec{
+			Name:            req.Name,
+			Description:     req.Description,
+			Version:         req.Version,
+			URL:             req.URL,
+			Skills:          skills,
+			Tags:            req.Tags,
+			ProtocolVersion: req.ProtocolVersion,
+			Enabled:         true,
+			Capabilities: a2aiov1.A2AAgentCapabilities{
+				Streaming:         req.Streaming,
+				PushNotifications: req.PushNotifications,
+			},
+		},
+	}
+
+	if err := h.client.Create(ctx, agent); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to register agent: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	metrics.RegistrationsTotal.Inc()
+
+	entry := agentToEntry(*agent)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(entry)
+}
+
+// DeregisterAgent handles agent deregistration via HTTP DELETE.
+func (h *Handler) DeregisterAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	name := extractNameFromPath(r.URL.Path, "/api/v1/agents/")
+	if name == "" {
+		http.Error(w, "Agent name is required.", http.StatusBadRequest)
+		return
+	}
+
+	namespace := r.URL.Query().Get("namespace")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	agent := &a2aiov1.A2AAgent{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+	if err := h.client.Delete(ctx, agent); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to deregister agent: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	metrics.DeregistrationsTotal.Inc()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// generateK8sName converts a display name into a Kubernetes-safe resource name.
+func generateK8sName(name string) string {
+	name = strings.ToLower(name)
+	name = strings.ReplaceAll(name, " ", "-")
+	// Remove characters that aren't alphanumeric, dash, or dot
+	result := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' {
+			result = append(result, c)
+		}
+	}
+	if len(result) == 0 {
+		return "agent"
+	}
+	return string(result)
+}
+
 // Search searches agents by various criteria.
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	query := r.URL.Query()
 
 	agents := &a2aiov1.A2AAgentList{}
-	if err := h.client.List(ctx, agents); err != nil {
+	listOpts := []client.ListOption{}
+
+	// Apply label selector from discovery config
+	if opt := labelSelectorFromConfig(h.config); opt != nil {
+		listOpts = append(listOpts, opt)
+	}
+
+	if err := h.client.List(ctx, agents, listOpts...); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to list agents: %v", err), http.StatusInternalServerError)
 		return
 	}
