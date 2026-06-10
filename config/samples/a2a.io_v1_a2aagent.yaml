@@ -2,7 +2,7 @@ apiVersion: a2a.io/v1
 kind: A2AAgent
 metadata:
   name: hello-world-agent
-  namespace: default
+  namespace: outbound-agent
 spec:
   name: "Hello World Agent"
   description: "A simple example agent that returns greetings"

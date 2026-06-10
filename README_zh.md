@@ -121,11 +121,13 @@
 git clone https://github.com/terminus-io/a2a-registry.git
 cd a2a-registry
 
-# 安装 CRD
-make install
+# 方式 A：kubectl + kustomize
+make install   # 安装 CRD
+make deploy    # 部署操作器
 
-# 部署操作器
-make deploy
+# 方式 B：Helm
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace
 ```
 
 ### 2. 创建注册中心
@@ -191,6 +193,23 @@ export IMG=your-registry/a2a-registry:latest
 make docker-build
 make docker-push
 make deploy
+```
+
+### 使用 Helm
+
+```bash
+git clone https://github.com/terminus-io/a2a-registry.git
+cd a2a-registry
+
+# 使用默认配置安装
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace
+
+# 使用自定义镜像安装
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace \
+  --set image.repository=your-registry/a2a-registry \
+  --set image.tag=latest
 ```
 
 ### 多架构构建
