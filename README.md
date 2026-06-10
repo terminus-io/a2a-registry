@@ -1,4 +1,5 @@
 # A2A Registry
+English Version | [中文版](README_zh.md) | [日本語版](README_ja.md)
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.27+-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
@@ -41,6 +42,8 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 - **Built-in Discovery API** — A RESTful HTTP API server (port `8082`) runs inside the operator, exposing endpoints for agent listing, search, registration, and card retrieval.
 - **Flexible Discovery Scope** — Configure discovery at `Cluster` or `Namespace` level, with label selectors and namespace filters — both enforced at the API level and the Kubernetes API level.
 - **Registration Policies** — Fine-grained control over `requireApproval`, `requireHealthCheck`, and `requireCardMatch` per registry.
+- **Global Health Check Defaults** — Set cluster-wide default health check interval and timeout via the `A2ARegistry` CR or Dashboard settings. Per-agent overrides take higher priority.
+- **Dashboard Settings UI** — Configure global health check defaults, registration policies, and approval toggles directly from the Dashboard (gear icon).
 - **Card Matching** — Optionally validates that a fetched agent card matches the CR spec (name, description, version, skills).
 - **Approval Workflow** — When `requireApproval` is enabled, new agents stay `Pending` until an operator adds an `Approved` condition.
 - **Agent Auto-Pruning** — Agents that remain `Unreachable` for 7 consecutive days are automatically removed.
@@ -142,6 +145,7 @@ kubectl port-forward -n a2a-registry-system svc/a2a-registry-controller-manager 
 curl -X POST http://localhost:8082/api/v1/agents \
   -H "Content-Type: application/json" \
   -d '{
+    "namespace": "outbound-agent",
     "name": "My Agent",
     "url": "http://my-agent.default.svc.cluster.local:9001",
     "skills": [{"id": "hello", "name": "Hello"}],
@@ -164,7 +168,7 @@ curl http://localhost:8082/.well-known/agent-card.json
 
 ### 5. Dashboard
 
-Visit `http://localhost:8082/` to open the Dashboard, with agent listing, search, registration, approval, detail view, and i18n (zh/en) support.
+Visit `http://localhost:8082/` to open the Dashboard, with agent listing, search, registration, approval, detail view, **global settings** (health check interval, registration policies, approval toggle), and i18n (zh/en) support.
 
 ![Dashboard](docs/image/dashboard.png)
 
@@ -242,6 +246,17 @@ spec:
 | `requireHealthCheck` | `true` | When false, agents are marked `Ready` immediately without health checks. |
 | `requireCardMatch` | `false` | When true, the fetched agent card must match the CR spec (name, description, version, skills). Mismatches cause `Error` phase. |
 
+**Health check defaults (cluster-wide):**
+
+| Field | Default | Description |
+|---|---|---|
+| `spec.healthCheck.intervalSeconds` | `60` | Default health check interval. Set via CR or Dashboard settings. Minimum: `1`. |
+| `spec.healthCheck.timeoutSeconds` | `10` | Default health check timeout. Must not exceed the interval. |
+
+> **Priority:** Per-agent `spec.healthCheck` > global `A2ARegistry.spec.healthCheck` > hardcoded fallback (60s).
+>
+> Global defaults can also be configured via the **Dashboard settings UI** (gear icon), which updates the `A2ARegistry` CR via `PUT /api/v1/config`.
+
 ### Registering an Agent
 
 An `A2AAgent` resource represents a single A2A agent in the cluster. It is namespaced.
@@ -251,7 +266,7 @@ apiVersion: a2a.io/v1
 kind: A2AAgent
 metadata:
   name: hello-world-agent
-  namespace: default
+  namespace: outbound-agent
 spec:
   name: "Hello World Agent"
   description: "A simple example agent that returns greetings"
@@ -299,7 +314,8 @@ spec:
 | `spec.enabled` | Set to `false` to disable health checking and remove from discovery |
 | `spec.capabilities` | Declare `streaming` and/or `pushNotifications` support |
 | `spec.authentication` | Optional authentication config (`schemes` + `secretRef`) for health-checking protected agent endpoints |
-| `spec.healthCheck` | Per-agent health check override (defaults: interval=60s, timeout=10s, failureThreshold=3) |
+| `spec.healthCheck` | Per-agent health check override (defaults: interval=60s, timeout=10s, failureThreshold=3). If not set, falls back to the global `A2ARegistry.spec.healthCheck`. |
+| `spec.healthCheck.intervalSeconds` | Overrides the global default health check interval. Priority: per-agent > global registry > 60s. |
 | `spec.healthCheck.failureThreshold` | Consecutive failures before agent becomes `Unreachable` (default: 3) |
 | `spec.tags` | Arbitrary tags for searching and filtering |
 
@@ -330,12 +346,15 @@ GET /api/v1/agents?skill=hello_world
 
 #### Register an agent
 
+> `namespace` is optional. If omitted or empty, the agent is created in the **`outbound-agent`** namespace (auto-created by the operator). You can also specify your own namespace.
+
 ```bash
 POST /api/v1/agents
 Content-Type: application/json
 
 {
   "name": "My Agent",
+  "namespace": "outbound-agent",
   "url": "http://agent.default.svc.cluster.local:9001",
   "description": "An example agent",
   "version": "1.0.0",
@@ -480,6 +499,8 @@ kubectl get a2aa -o wide            # Show additional columns (Phase, Health, UR
 | `DELETE` | `/api/v1/agents/{name}` | Deregister an agent |
 | `GET` | `/api/v1/agents/{name}/card` | Get an agent's A2A Agent Card |
 | `GET` | `/api/v1/search` | Search agents (`?q=`, `?tag=`, `?skill=`, `?capability=`) |
+| `GET` | `/api/v1/config` | Get registry configuration (policies, health check defaults) |
+| `PUT` | `/api/v1/config` | Update registry configuration (Dashboard settings) |
 | `GET` | `/.well-known/agent-card.json` | Registry's own Agent Card |
 | `GET` | `/.well-known/agent.json` | Registry's Agent Card (legacy path) |
 

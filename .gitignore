@@ -6,4 +6,5 @@ cover.out
 *.swo
 *~
 .DS_Store
+._*
 cover.out

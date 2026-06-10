@@ -73,6 +73,14 @@ tr:hover { background: #1e293b; }
 .lang-switch { display: flex; gap: 4px; }
 .lang-switch button { padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; border: 1px solid #334155; background: transparent; color: #94a3b8; }
 .lang-switch button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.toggle-row span { font-size: 14px; }
+.toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #475569; border-radius: 24px; transition: 0.3s; }
+.toggle .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: #e2e8f0; border-radius: 50%; transition: 0.3s; }
+.toggle input:checked + .slider { background: #16a34a; }
+.toggle input:checked + .slider:before { transform: translateX(20px); }
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 </style>
 </head>
@@ -84,9 +92,12 @@ tr:hover { background: #1e293b; }
     <div class="stat"><div class="num green" id="healthyAgents">-</div><div class="label" data-i18n="healthy">Healthy</div></div>
     <div class="stat"><div class="num yellow" id="pendingAgents">-</div><div class="label" data-i18n="pending">Pending</div></div>
   </div>
-  <div class="lang-switch">
-    <button id="btnZh" onclick="setLang('zh')">中文</button>
-    <button id="btnEn" onclick="setLang('en')">EN</button>
+  <div style="display:flex;align-items:center;gap:8px">
+    <button class="btn btn-ghost btn-icon" onclick="showSettings()" title="Settings" id="btnSettings">&#9881;</button>
+    <div class="lang-switch">
+      <button id="btnZh" onclick="setLang('zh')">中文</button>
+      <button id="btnEn" onclick="setLang('en')">EN</button>
+    </div>
   </div>
 </div>
 <div class="container">
@@ -125,6 +136,7 @@ tr:hover { background: #1e293b; }
     <h2 data-i18n="regTitle">Register Agent</h2>
     <label data-i18n="regName">Name *</label><input type="text" id="regName" placeholder="My Agent">
     <label>URL *</label><input type="text" id="regURL" placeholder="http://agent.ns.svc.cluster.local:9001">
+    <label data-i18n="namespace">Namespace</label><input type="text" id="regNamespace" placeholder="outbound-agent">
     <label data-i18n="regDesc">Description</label><input type="text" id="regDesc">
     <label data-i18n="regVersion">Version</label><input type="text" id="regVersion" placeholder="1.0.0">
     <label data-i18n="regTags">Tags (comma separated)</label><input type="text" id="regTags" placeholder="demo,example">
@@ -132,6 +144,42 @@ tr:hover { background: #1e293b; }
     <div class="btn-row">
       <button class="btn btn-ghost" onclick="hideRegister()" data-i18n="cancel">Cancel</button>
       <button class="btn btn-primary" onclick="doRegister()" data-i18n="regBtn">Register</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <h2 data-i18n="settingsTitle">Settings</h2>
+    <h3 data-i18n="healthCheckSettings">Health Check</h3>
+    <label data-i18n="hcInterval">Interval</label>
+    <select id="settingsInterval" onchange="onIntervalChange()">
+      <option value="1">1s</option>
+      <option value="15">15s</option>
+      <option value="30">30s</option>
+      <option value="60" selected>1 min</option>
+      <option value="0" data-i18n="custom">Custom</option>
+    </select>
+    <input type="number" id="settingsIntervalCustom" placeholder="Custom seconds" min="1" style="display:none;margin-top:4px">
+    <label data-i18n="hcTimeout" style="margin-top:8px">Timeout (seconds)</label>
+    <input type="number" id="settingsTimeout" placeholder="10" min="1">
+    <h3 data-i18n="regPolicies">Registration Policies</h3>
+    <div class="toggle-row">
+      <span data-i18n="requireApproval">Require Approval</span>
+      <label class="toggle"><input type="checkbox" id="settingsApproval"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span data-i18n="requireHealthCheck">Require Health Check</span>
+      <label class="toggle"><input type="checkbox" id="settingsHealthCheck"><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span data-i18n="requireCardMatch">Require Card Match</span>
+      <label class="toggle"><input type="checkbox" id="settingsCardMatch"><span class="slider"></span></label>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="hideSettings()" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()" data-i18n="save">Save</button>
     </div>
   </div>
 </div>
@@ -159,7 +207,7 @@ const i18n = {
     total: '总数', healthy: '健康', pending: '待审批',
     search: '搜索 agent...', allStatus: '全部状态',
     register: '+ 注册', regTitle: '注册新 Agent',
-    regName: '名称 *', regDesc: '描述', regVersion: '版本',
+    regName: '名称 *', regDesc: '描述', regVersion: '版本', namespace: '命名空间',
     regTags: '标签 (逗号分隔)', regSkills: '技能 (每行: id,name)',
     cancel: '取消', regBtn: '注册', close: '关闭',
     colName: '名称', colTags: '标签', colOps: '操作',
@@ -172,12 +220,18 @@ const i18n = {
     phase: 'Phase', healthLbl: 'Health', versionLbl: 'Version',
     desc: '描述', tagsLbl: '标签', nsLabel: 'K8s Name',
     nsField: 'Namespace',
+    settingsTitle: '全局设置', healthCheckSettings: '健康检查',
+    hcInterval: '检测间隔', hcTimeout: '超时时间',
+    custom: '自定义', regPolicies: '注册策略',
+    requireApproval: '需要审批', requireHealthCheck: '需要健康检查',
+    requireCardMatch: '需要卡片匹配', save: '保存',
+    settingsOk: '设置已保存', settingsFail: '保存失败',
   },
   en: {
     total: 'Total', healthy: 'Healthy', pending: 'Pending',
     search: 'Search agents...', allStatus: 'All',
     register: '+ Register', regTitle: 'Register Agent',
-    regName: 'Name *', regDesc: 'Description', regVersion: 'Version',
+    regName: 'Name *', regDesc: 'Description', regVersion: 'Version', namespace: 'Namespace',
     regTags: 'Tags (comma separated)', regSkills: 'Skills (one per line: id,name)',
     cancel: 'Cancel', regBtn: 'Register', close: 'Close',
     colName: 'Name', colTags: 'Tags', colOps: 'Ops',
@@ -190,6 +244,12 @@ const i18n = {
     phase: 'Phase', healthLbl: 'Health', versionLbl: 'Version',
     desc: 'Description', tagsLbl: 'Tags', nsLabel: 'K8s Name',
     nsField: 'Namespace',
+    settingsTitle: 'Settings', healthCheckSettings: 'Health Check',
+    hcInterval: 'Interval', hcTimeout: 'Timeout',
+    custom: 'Custom', regPolicies: 'Registration Policies',
+    requireApproval: 'Require Approval', requireHealthCheck: 'Require Health Check',
+    requireCardMatch: 'Require Card Match', save: 'Save',
+    settingsOk: 'Settings saved', settingsFail: 'Save failed',
   }
 };
 
@@ -212,12 +272,15 @@ setLang(lang);
 
 let agents = [];
 let requireApproval = false;
+let settingsData = {};
 
 async function fetchConfig() {
   try {
     const res = await fetch('/api/v1/config');
     const cfg = await res.json();
-    requireApproval = cfg.requireApproval;
+    requireApproval = cfg.requireApproval || false;
+    settingsData = cfg;
+    populateSettings();
   } catch(e) { requireApproval = false; }
 }
 async function fetchAgents() {
@@ -339,11 +402,12 @@ async function doRegister() {
     return { id, name: n || id };
   }) : [];
   const tags = document.getElementById('regTags').value.split(',').map(s => s.trim()).filter(Boolean);
+  const namespace = document.getElementById('regNamespace').value.trim() || 'outbound-agent';
   try {
-    const res = await fetch('/api/v1/agents?namespace=default', {
+    const res = await fetch('/api/v1/agents', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name, url,
+        name, namespace, url,
         description: document.getElementById('regDesc').value.trim(),
         version: document.getElementById('regVersion').value.trim(),
         skills, tags, protocolVersion: '1.0'
@@ -366,6 +430,57 @@ async function approveAgent(name, ns) {
     const res = await fetch(`/api/v1/agents/${name}/approve?namespace=${ns}`, { method: 'POST' });
     if (res.ok) { toast(t('approveOk')); fetchAgents(); }
     else { const txt = await res.text(); toast(t('approveFail') + ': ' + txt, 'error'); }
+  } catch(e) { toast(t('netErr'), 'error'); }
+}
+function onIntervalChange() {
+  const sel = document.getElementById('settingsInterval').value;
+  document.getElementById('settingsIntervalCustom').style.display = sel === '0' ? '' : 'none';
+}
+function populateSettings() {
+  const d = settingsData;
+  // Health check interval
+  const vals = ['1','15','30','60'];
+  const iv = String(d.healthCheckIntervalSeconds || 60);
+  if (vals.includes(iv)) {
+    document.getElementById('settingsInterval').value = iv;
+    document.getElementById('settingsIntervalCustom').style.display = 'none';
+    document.getElementById('settingsIntervalCustom').value = '';
+  } else {
+    document.getElementById('settingsInterval').value = '0';
+    document.getElementById('settingsIntervalCustom').style.display = '';
+    document.getElementById('settingsIntervalCustom').value = iv;
+  }
+  // Timeout
+  document.getElementById('settingsTimeout').value = d.healthCheckTimeoutSeconds || 10;
+  // Registration toggles
+  document.getElementById('settingsApproval').checked = d.requireApproval || false;
+  document.getElementById('settingsHealthCheck').checked = d.requireHealthCheck !== false;
+  document.getElementById('settingsCardMatch').checked = d.requireCardMatch || false;
+}
+function showSettings() {
+  populateSettings();
+  document.getElementById('settingsModal').classList.add('active');
+}
+function hideSettings() { document.getElementById('settingsModal').classList.remove('active'); }
+async function saveSettings() {
+  const sel = document.getElementById('settingsInterval').value;
+  const custom = document.getElementById('settingsIntervalCustom').value;
+  const interval = sel === '0' ? parseInt(custom) || 60 : parseInt(sel);
+  const timeout = parseInt(document.getElementById('settingsTimeout').value) || 10;
+
+  try {
+    const res = await fetch('/api/v1/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requireApproval: document.getElementById('settingsApproval').checked,
+        requireHealthCheck: document.getElementById('settingsHealthCheck').checked,
+        requireCardMatch: document.getElementById('settingsCardMatch').checked,
+        healthCheckIntervalSeconds: interval,
+        healthCheckTimeoutSeconds: timeout
+      })
+    });
+    if (res.ok) { toast(t('settingsOk')); hideSettings(); fetchConfig(); }
+    else { const txt = await res.text(); toast(t('settingsFail') + ': ' + txt, 'error'); }
   } catch(e) { toast(t('netErr'), 'error'); }
 }
 function toast(msg, type) {
