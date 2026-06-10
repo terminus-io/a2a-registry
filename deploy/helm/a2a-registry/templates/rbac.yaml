@@ -7,6 +7,15 @@ metadata:
   labels:
     {{- include "a2a-registry.labels" . | nindent 4 }}
 rules:
+  # Core resources (namespace management)
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+      - list
   # A2AAgent resources
   - apiGroups:
       - a2a.io

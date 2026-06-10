@@ -121,11 +121,13 @@ Built with the [kubebuilder](https://github.com/kubernetes-sigs/kubebuilder) fra
 git clone https://github.com/terminus-io/a2a-registry.git
 cd a2a-registry
 
-# Install CRDs
-make install
+# Option A: kubectl + kustomize
+make install   # Install CRDs
+make deploy    # Deploy the operator
 
-# Deploy the operator
-make deploy
+# Option B: Helm
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace
 ```
 
 ### 2. Create a registry
@@ -191,6 +193,23 @@ export IMG=your-registry/a2a-registry:latest
 make docker-build
 make docker-push
 make deploy
+```
+
+### Using Helm
+
+```bash
+git clone https://github.com/terminus-io/a2a-registry.git
+cd a2a-registry
+
+# Install with default values
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace
+
+# Install with custom image
+helm install a2a-registry deploy/helm/a2a-registry \
+  --namespace a2a-registry-system --create-namespace \
+  --set image.repository=your-registry/a2a-registry \
+  --set image.tag=latest
 ```
 
 ### Multi-arch build

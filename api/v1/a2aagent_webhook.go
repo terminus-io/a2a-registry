@@ -126,6 +126,11 @@ func (d *A2AAgentDefaulter) Default(ctx context.Context, obj *A2AAgent) error {
 		obj.Spec.ProtocolVersion = "1.0"
 	}
 
+	// Default enabled to true when URL is set
+	if !obj.Spec.Enabled && obj.Spec.URL != "" {
+		obj.Spec.Enabled = true
+	}
+
 	// Default health check config
 	if obj.Spec.HealthCheck == nil {
 		obj.Spec.HealthCheck = &HealthCheckConfig{
