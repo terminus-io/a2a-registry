@@ -65,7 +65,7 @@ func (r *A2ARegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			logger.Error(err, "Failed to add finalizer.")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		// Continue reconciliation instead of returning early.
 	}
 
 	agents := &a2aiov1.A2AAgentList{}

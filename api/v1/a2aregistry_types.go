@@ -33,7 +33,7 @@ type RegistrationConfig struct {
 
 // HealthCheckDefaults defines cluster-wide health check defaults.
 type HealthCheckDefaults struct {
-	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Minimum=1
 	// IntervalSeconds is the default health check interval.
 	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
 

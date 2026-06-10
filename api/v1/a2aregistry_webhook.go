@@ -65,10 +65,7 @@ func validateA2ARegistry(r *A2ARegistry) error {
 		}
 	}
 
-	// Validate health check defaults
-	if r.Spec.HealthCheck.IntervalSeconds > 0 && r.Spec.HealthCheck.IntervalSeconds < 10 {
-		errs = append(errs, "spec.healthCheck.intervalSeconds must be at least 10")
-	}
+	// Validate health check defaults (minimum interval is enforced by CRD schema)
 	if r.Spec.HealthCheck.TimeoutSeconds > 0 &&
 		r.Spec.HealthCheck.IntervalSeconds > 0 &&
 		r.Spec.HealthCheck.TimeoutSeconds > r.Spec.HealthCheck.IntervalSeconds {

@@ -1,4 +1,5 @@
 # A2A Registry
+中文版 | [English Version](README.md) | [日本語版](README_ja.md)
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.27+-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
@@ -41,6 +42,8 @@
 - **内置发现 API** — 操作器内运行 RESTful HTTP API 服务器（端口 `8082`），暴露 agent 列表、搜索、注册和卡片检索等端点。
 - **灵活的发现范围** — 支持 `Cluster` 或 `Namespace` 级别的发现，配合标签选择器和命名空间过滤——在 API 层面和 Kubernetes API 层面均可生效。
 - **注册策略** — 精细控制 `requireApproval`（需审批）、`requireHealthCheck`（需健康检查）和 `requireCardMatch`（需卡片匹配）。
+- **全局健康检查默认值** — 通过 `A2ARegistry` CR 或 Dashboard 设置界面配置集群级别的健康检查默认间隔和超时时间。每个 Agent 可单独覆盖。
+- **Dashboard 设置界面** — 在 Dashboard 中通过齿轮图标直接配置全局健康检查参数、注册策略和审批开关。
 - **卡片匹配** — 可选校验拉取到的 agent card 是否与 CR 中声明的 spec 一致（名称、描述、版本、技能）。
 - **审批流程** — 启用 `requireApproval` 时，新建 agent 保持 `Pending` 状态，直到运维人员手动添加 `Approved` 条件。
 - **Agent 自动清理** — 连续 `Unreachable` 超过 7 天的 agent 会被自动删除。
@@ -142,6 +145,7 @@ kubectl port-forward -n a2a-registry-system svc/a2a-registry-controller-manager 
 curl -X POST http://localhost:8082/api/v1/agents \
   -H "Content-Type: application/json" \
   -d '{
+    "namespace": "outbound-agent",
     "name": "我的 Agent",
     "url": "http://my-agent.default.svc.cluster.local:9001",
     "skills": [{"id": "hello", "name": "打招呼"}],
@@ -164,7 +168,7 @@ curl http://localhost:8082/.well-known/agent-card.json
 
 ### 5. Dashboard
 
-访问 `http://localhost:8082/` 即可打开 Dashboard 界面，支持 Agent 列表、搜索过滤、注册、审批、详情查看，以及中英文切换。
+访问 `http://localhost:8082/` 即可打开 Dashboard 界面，支持 Agent 列表、搜索过滤、注册、审批、详情查看、**全局设置**（健康检查间隔、注册策略、审批开关），以及中英文切换。
 
 ![Dashboard](docs/image/dashboard.png)
 
@@ -242,6 +246,17 @@ spec:
 | `requireHealthCheck` | `true` | 为 false 时，agent 跳过健康检查直接标记为 `Ready`。 |
 | `requireCardMatch` | `false` | 为 true 时，拉取到的 agent card 必须与 CR spec 一致（名称、描述、版本、技能）。不一致则进入 `Error`。 |
 
+**健康检查默认值（集群级别）：**
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `spec.healthCheck.intervalSeconds` | `60` | 默认健康检查间隔。可通过 CR 或 Dashboard 设置界面配置。最小值：`1`。 |
+| `spec.healthCheck.timeoutSeconds` | `10` | 默认健康检查超时时间。不能超过间隔。 |
+
+> **优先级：** 每个 Agent 的 `spec.healthCheck` > 全局 `A2ARegistry.spec.healthCheck` > 硬编码默认值（60秒）。
+>
+> 全局默认值也可通过 **Dashboard 设置界面**（齿轮图标）进行配置，它会通过 `PUT /api/v1/config` 更新 `A2ARegistry` CR。
+
 ### 注册 Agent
 
 `A2AAgent` 是命名空间级别的资源，代表集群中的单个 A2A agent。
@@ -251,7 +266,7 @@ apiVersion: a2a.io/v1
 kind: A2AAgent
 metadata:
   name: hello-world-agent
-  namespace: default
+  namespace: outbound-agent
 spec:
   name: "Hello World Agent"
   description: "一个返回问候语的简单示例 agent"
@@ -299,7 +314,8 @@ spec:
 | `spec.enabled` | 设为 `false` 可禁用健康检查并从发现结果中移除 |
 | `spec.capabilities` | 声明是否支持 `streaming` 和/或 `pushNotifications` |
 | `spec.authentication` | 可选认证配置（`schemes` + `secretRef`），用于健康检查受保护的 agent 端点 |
-| `spec.healthCheck` | 每个 agent 的健康检查参数覆写（默认：interval=60s, timeout=10s, failureThreshold=3） |
+| `spec.healthCheck` | 每个 agent 的健康检查参数覆写（默认：interval=60s, timeout=10s, failureThreshold=3）。若不设置，回退到全局 `A2ARegistry.spec.healthCheck`。 |
+| `spec.healthCheck.intervalSeconds` | 覆盖全局默认健康检查间隔。优先级：per-agent > 全局 registry > 60秒。 |
 | `spec.healthCheck.failureThreshold` | 连续多少次失败后 agent 变为 `Unreachable`（默认 3） |
 | `spec.tags` | 用于搜索和过滤的任意标签 |
 
@@ -330,12 +346,15 @@ GET /api/v1/agents?skill=hello_world
 
 #### 注册 Agent
 
+> `namespace` 为选填字段。不填或为空时，Agent 将创建在 **`outbound-agent`** 命名空间中（Operator 启动时自动创建）。也可自行指定其他命名空间。
+
 ```bash
 POST /api/v1/agents
 Content-Type: application/json
 
 {
   "name": "我的 Agent",
+  "namespace": "outbound-agent",
   "url": "http://agent.default.svc.cluster.local:9001",
   "description": "一个示例 agent",
   "version": "1.0.0",
@@ -480,6 +499,8 @@ kubectl get a2aa -o wide            # 显示额外列（Phase、Health、URL）
 | `DELETE` | `/api/v1/agents/{name}` | 注销 agent |
 | `GET` | `/api/v1/agents/{name}/card` | 获取 agent 的 A2A Agent Card |
 | `GET` | `/api/v1/search` | 搜索 agent（`?q=`、`?tag=`、`?skill=`、`?capability=`） |
+| `GET` | `/api/v1/config` | 获取注册中心配置（策略、健康检查默认值） |
+| `PUT` | `/api/v1/config` | 更新注册中心配置（Dashboard 设置界面） |
 | `GET` | `/.well-known/agent-card.json` | 注册中心自身的 Agent Card |
 | `GET` | `/.well-known/agent.json` | 注册中心 Agent Card（兼容旧版路径） |
 

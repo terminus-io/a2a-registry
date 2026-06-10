@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -28,6 +33,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(a2aiov1.AddToScheme(scheme))
 }
+
 
 func main() {
 	var metricsAddr string
@@ -118,9 +124,33 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Ensure the default agent namespace exists
+	if err := ensureNamespace(mgr.GetClient(), "outbound-agent"); err != nil {
+		setupLog.Error(err, "unable to ensure default namespace")
+		// non-fatal: operator continues even if namespace creation fails
+	}
+
+
 	setupLog.Info("starting A2A Registry manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// ensureNamespace creates the namespace if it does not already exist.
+func ensureNamespace(c client.Client, name string) error {
+	ctx := context.Background()
+	ns := &corev1.Namespace{}
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, ns); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
+		ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if err := c.Create(ctx, ns); err != nil {
+			return err
+		}
+		setupLog.Info("created default agent namespace", "namespace", name)
+	}
+	return nil
 }

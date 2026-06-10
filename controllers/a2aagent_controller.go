@@ -75,7 +75,10 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			logger.Error(err, "Failed to add finalizer.")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		// Continue reconciliation instead of returning early, so that
+		// approval checks and health checks can proceed immediately.
+		// The GenerationChangedPredicate would otherwise filter out the
+		// update event (finalizer changes don't increment generation).
 	}
 
 	// Record registration time on first reconciliation
@@ -117,7 +120,7 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	previousPhase := agent.Status.Phase
 
 	// Check if approval is required and agent is not yet approved
-	if registryConfig != nil && registryConfig.RequireApproval {
+	if registryConfig != nil && registryConfig.Registration.RequireApproval {
 		if !isApproved(agent) {
 			logger.Info("Agent requires approval, skipping health check.")
 			agent.Status.Phase = a2aiov1.A2AAgentPhasePending
@@ -147,7 +150,11 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		})
 	}
 
+	// Priority: per-agent > global registry default > hardcoded 60s
 	intervalSeconds := int32(60)
+	if registryConfig != nil && registryConfig.HealthCheck.IntervalSeconds > 0 {
+		intervalSeconds = registryConfig.HealthCheck.IntervalSeconds
+	}
 	if agent.Spec.HealthCheck != nil {
 		if agent.Spec.HealthCheck.IntervalSeconds > 0 {
 			intervalSeconds = agent.Spec.HealthCheck.IntervalSeconds
@@ -159,7 +166,7 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	var healthResult *healthcheck.Result
 	now := metav1.Now()
 
-	if registryConfig != nil && !registryConfig.RequireHealthCheck {
+	if registryConfig != nil && !registryConfig.Registration.RequireHealthCheck {
 		logger.Info("Health check disabled by registry config.")
 		agent.Status.Phase = a2aiov1.A2AAgentPhaseReady
 		agent.Status.Health = a2aiov1.A2AAgentHealthHealthy
@@ -193,7 +200,7 @@ func (r *A2AAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 					"Agent recovered from %s to Ready.", previousPhase)
 			}
 
-			if registryConfig != nil && registryConfig.RequireCardMatch && healthResult.Card != nil {
+			if registryConfig != nil && registryConfig.Registration.RequireCardMatch && healthResult.Card != nil {
 				if mismatch := checkCardMatch(agent, healthResult.Card); mismatch != "" {
 					agent.Status.Health = a2aiov1.A2AAgentHealthUnhealthy
 					agent.Status.Phase = a2aiov1.A2AAgentPhaseError
@@ -264,12 +271,12 @@ func (r *A2AAgentReconciler) checkURLConflict(ctx context.Context, agent *a2aiov
 	return ""
 }
 
-func (r *A2AAgentReconciler) getRegistryConfig(ctx context.Context) *a2aiov1.RegistrationConfig {
+func (r *A2AAgentReconciler) getRegistryConfig(ctx context.Context) *a2aiov1.A2ARegistrySpec {
 	registries := &a2aiov1.A2ARegistryList{}
 	if err := r.List(ctx, registries); err != nil || len(registries.Items) == 0 {
 		return nil
 	}
-	return &registries.Items[0].Spec.Registration
+	return &registries.Items[0].Spec
 }
 
 func checkCardMatch(agent *a2aiov1.A2AAgent, card *a2a.AgentCard) string {

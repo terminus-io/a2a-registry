@@ -31,23 +31,82 @@ func NewHandler(client client.Client, config *DiscoveryConfig) *Handler {
 
 // ConfigResponse holds the registry configuration for the dashboard.
 type ConfigResponse struct {
-	RequireApproval bool `json:"requireApproval"`
+	RequireApproval            bool  `json:"requireApproval"`
+	RequireHealthCheck         bool  `json:"requireHealthCheck"`
+	RequireCardMatch           bool  `json:"requireCardMatch"`
+	HealthCheckIntervalSeconds int32 `json:"healthCheckIntervalSeconds"`
+	HealthCheckTimeoutSeconds  int32 `json:"healthCheckTimeoutSeconds"`
 }
 
 // Config returns the registry configuration used by the dashboard.
 func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
-	requireApproval := false
+	resp := ConfigResponse{}
 	if h.config != nil {
-		// We need to read the registry CR to get the actual value.
-		// For the dashboard, we read the first A2ARegistry.
 		registries := &a2aiov1.A2ARegistryList{}
 		if err := h.client.List(r.Context(), registries); err == nil && len(registries.Items) > 0 {
-			requireApproval = registries.Items[0].Spec.Registration.RequireApproval
+			cfg := registries.Items[0].Spec
+			resp.RequireApproval = cfg.Registration.RequireApproval
+			resp.RequireHealthCheck = cfg.Registration.RequireHealthCheck
+			resp.RequireCardMatch = cfg.Registration.RequireCardMatch
+			resp.HealthCheckIntervalSeconds = cfg.HealthCheck.IntervalSeconds
+			resp.HealthCheckTimeoutSeconds = cfg.HealthCheck.TimeoutSeconds
 		}
 	}
-	resp := ConfigResponse{RequireApproval: requireApproval}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// UpdateConfigRequest is the payload for updating registry configuration.
+type UpdateConfigRequest struct {
+	RequireApproval            *bool  `json:"requireApproval,omitempty"`
+	RequireHealthCheck         *bool  `json:"requireHealthCheck,omitempty"`
+	RequireCardMatch           *bool  `json:"requireCardMatch,omitempty"`
+	HealthCheckIntervalSeconds *int32 `json:"healthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  *int32 `json:"healthCheckTimeoutSeconds,omitempty"`
+}
+
+// UpdateConfig handles registry configuration updates via HTTP PUT.
+func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req UpdateConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	registries := &a2aiov1.A2ARegistryList{}
+	if err := h.client.List(ctx, registries); err != nil || len(registries.Items) == 0 {
+		http.Error(w, "No A2ARegistry resource found.", http.StatusNotFound)
+		return
+	}
+
+	reg := &registries.Items[0]
+
+	if req.RequireApproval != nil {
+		reg.Spec.Registration.RequireApproval = *req.RequireApproval
+	}
+	if req.RequireHealthCheck != nil {
+		reg.Spec.Registration.RequireHealthCheck = *req.RequireHealthCheck
+	}
+	if req.RequireCardMatch != nil {
+		reg.Spec.Registration.RequireCardMatch = *req.RequireCardMatch
+	}
+	if req.HealthCheckIntervalSeconds != nil {
+		reg.Spec.HealthCheck.IntervalSeconds = *req.HealthCheckIntervalSeconds
+	}
+	if req.HealthCheckTimeoutSeconds != nil {
+		reg.Spec.HealthCheck.TimeoutSeconds = *req.HealthCheckTimeoutSeconds
+	}
+
+	if err := h.client.Update(ctx, reg); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 // WellKnown returns the registry's own Agent Card.
@@ -217,7 +276,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Determine namespace from query or default
 	namespace := r.URL.Query().Get("namespace")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "outbound-agent"
 	}
 
 	agent := &a2aiov1.A2AAgent{}
@@ -245,7 +304,7 @@ func (h *Handler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 
 	namespace := r.URL.Query().Get("namespace")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "outbound-agent"
 	}
 
 	agent := &a2aiov1.A2AAgent{}
@@ -262,15 +321,16 @@ func (h *Handler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 
 // RegisterRequest is the payload for the agent registration endpoint.
 type RegisterRequest struct {
-	Name            string                 `json:"name"`
-	Description     string                 `json:"description,omitempty"`
-	Version         string                 `json:"version,omitempty"`
-	URL             string                 `json:"url"`
-	Skills          []SkillEntry           `json:"skills,omitempty"`
-	Tags            []string               `json:"tags,omitempty"`
-	Streaming       bool                   `json:"streaming,omitempty"`
-	PushNotifications bool                 `json:"pushNotifications,omitempty"`
-	ProtocolVersion string                 `json:"protocolVersion,omitempty"`
+	Name              string       `json:"name"`
+	Namespace         string       `json:"namespace,omitempty"`
+	Description       string       `json:"description,omitempty"`
+	Version           string       `json:"version,omitempty"`
+	URL               string       `json:"url"`
+	Skills            []SkillEntry `json:"skills,omitempty"`
+	Tags              []string     `json:"tags,omitempty"`
+	Streaming         bool         `json:"streaming,omitempty"`
+	PushNotifications bool         `json:"pushNotifications,omitempty"`
+	ProtocolVersion   string       `json:"protocolVersion,omitempty"`
 }
 
 // RegisterAgent handles agent registration via HTTP POST.
@@ -290,9 +350,9 @@ func (h *Handler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a K8s-safe name from the agent name
 	k8sName := generateK8sName(req.Name)
-	namespace := r.URL.Query().Get("namespace")
+	namespace := req.Namespace
 	if namespace == "" {
-		namespace = "default"
+		namespace = "outbound-agent"
 	}
 
 	// Check for URL conflict
@@ -361,7 +421,7 @@ func (h *Handler) DeregisterAgent(w http.ResponseWriter, r *http.Request) {
 
 	namespace := r.URL.Query().Get("namespace")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "outbound-agent"
 	}
 
 	agent := &a2aiov1.A2AAgent{

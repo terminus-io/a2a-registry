@@ -127,7 +127,14 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/agents", agentsHandler)
 	mux.HandleFunc("/api/v1/agents/", agentsHandler)
 
-	mux.HandleFunc("/api/v1/config", measureDuration("config", s.handler.Config))
+	mux.HandleFunc("/api/v1/config", measureDuration("config", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			s.handler.UpdateConfig(w, r)
+		default:
+			s.handler.Config(w, r)
+		}
+	}))
 	mux.HandleFunc("/api/v1/search", measureDuration("search", s.handler.Search))
 
 	s.httpServer = &http.Server{Addr: s.addr, Handler: mux}

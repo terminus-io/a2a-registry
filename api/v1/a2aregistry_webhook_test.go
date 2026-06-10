@@ -92,15 +92,15 @@ func TestValidateA2ARegistry_ValidPort(t *testing.T) {
 	}
 }
 
-func TestValidateA2ARegistry_HealthCheckIntervalTooSmall(t *testing.T) {
+func TestValidateA2ARegistry_HealthCheckIntervalMin(t *testing.T) {
 	reg := &A2ARegistry{
 		Spec: A2ARegistrySpec{
-			HealthCheck: HealthCheckDefaults{IntervalSeconds: 5},
+			HealthCheck: HealthCheckDefaults{IntervalSeconds: 1},
 		},
 	}
 	err := validateA2ARegistry(reg)
-	if err == nil {
-		t.Fatal("expected error for interval < 10")
+	if err != nil {
+		t.Errorf("expected no error for interval = 1, got: %v", err)
 	}
 }
 
